@@ -1,6 +1,6 @@
 <?php
 
-namespace Vizir\KeycloakWebGuard;
+namespace Careerum\KeycloakWebGuard;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
@@ -9,13 +9,11 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
-use Vizir\KeycloakWebGuard\Auth\Guard\KeycloakWebGuard;
-use Vizir\KeycloakWebGuard\Auth\KeycloakWebUserProvider;
-use Vizir\KeycloakWebGuard\Middleware\KeycloakAuthenticated;
-use Vizir\KeycloakWebGuard\Middleware\KeycloakCan;
-use Vizir\KeycloakWebGuard\Middleware\KeycloakCanOne;
-use Vizir\KeycloakWebGuard\Models\KeycloakUser;
-use Vizir\KeycloakWebGuard\Services\KeycloakService;
+use Careerum\KeycloakWebGuard\Auth\Guard\KeycloakWebGuard;
+use Careerum\KeycloakWebGuard\Auth\KeycloakWebUserProvider;
+use Careerum\KeycloakWebGuard\Middleware\KeycloakAuthenticated;
+use Careerum\KeycloakWebGuard\Middleware\KeycloakCan;
+use Careerum\KeycloakWebGuard\Services\KeycloakService;
 
 class KeycloakWebGuardServiceProvider extends ServiceProvider
 {
@@ -34,7 +32,13 @@ class KeycloakWebGuardServiceProvider extends ServiceProvider
 
         // User Provider
         Auth::provider('keycloak-users', function($app, array $config) {
-            return new KeycloakWebUserProvider($config['model']);
+            return new KeycloakWebUserProvider(
+                $config['model'],
+                $config['modelSearchField'],
+                $config['keyCloakSearchField'],
+                $config['userCreator'],
+                $config['syncUser'],
+            );
         });
 
         // Gate
@@ -73,9 +77,6 @@ class KeycloakWebGuardServiceProvider extends ServiceProvider
         // Add Middleware "keycloak-web-can"
         $this->app['router']->aliasMiddleware('keycloak-web-can', KeycloakCan::class);
 
-        // Add Middleware "keycloak-web-can-one
-        $this->app['router']->aliasMiddleware('keycloak-web-can-one', KeycloakCanOne::class);
-
         // Bind for client data
         $this->app->when(KeycloakService::class)->needs(ClientInterface::class)->give(function() {
             return new Client(Config::get('keycloak-web.guzzle_options', []));
@@ -103,19 +104,19 @@ class KeycloakWebGuardServiceProvider extends ServiceProvider
         $router = $this->app->make('router');
 
         if (! empty($routes['login'])) {
-            $router->middleware('web')->get($routes['login'], 'Vizir\KeycloakWebGuard\Controllers\AuthController@login')->name('keycloak.login');
+            $router->middleware('web')->get($routes['login'], 'Careerum\KeycloakWebGuard\Controllers\AuthController@login')->name('keycloak.login');
         }
 
         if (! empty($routes['logout'])) {
-            $router->middleware('web')->get($routes['logout'], 'Vizir\KeycloakWebGuard\Controllers\AuthController@logout')->name('keycloak.logout');
+            $router->middleware('web')->get($routes['logout'], 'Careerum\KeycloakWebGuard\Controllers\AuthController@logout')->name('keycloak.logout');
         }
 
         if (! empty($routes['register'])) {
-            $router->middleware('web')->get($routes['register'], 'Vizir\KeycloakWebGuard\Controllers\AuthController@register')->name('keycloak.register');
+            $router->middleware('web')->get($routes['register'], 'Careerum\KeycloakWebGuard\Controllers\AuthController@register')->name('keycloak.register');
         }
 
         if (! empty($routes['callback'])) {
-            $router->middleware('web')->get($routes['callback'], 'Vizir\KeycloakWebGuard\Controllers\AuthController@callback')->name('keycloak.callback');
+            $router->middleware('web')->get($routes['callback'], 'Careerum\KeycloakWebGuard\Controllers\AuthController@callback')->name('keycloak.callback');
         }
     }
 }
