@@ -36,7 +36,7 @@ Any other version is not guaranteed to work.
 Require the package
 
 ```
-composer require vizir/laravel-keycloak-web-guard
+composer require careerum/laravel-keycloak-web-guard
 ```
 
 If you want to change routes or the default values for Keycloak, publish the config file:
@@ -286,6 +286,7 @@ Just add the options you would like to `guzzle_options` array on `keycloak-web.p
 
 ## Developers
 
+* Sergey Nechaev
 * Mário Valney [@mariovalney](https://twitter.com/mariovalney)
 * [Vizir Software Studio](https://vizir.com.br)
 
