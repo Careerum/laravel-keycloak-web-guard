@@ -1,15 +1,15 @@
 <?php
 
-namespace Vizir\KeycloakWebGuard\Auth\Guard;
+namespace Careerum\KeycloakWebGuard\Auth\Guard;
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\Guard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
-use Vizir\KeycloakWebGuard\Auth\KeycloakAccessToken;
-use Vizir\KeycloakWebGuard\Exceptions\KeycloakCallbackException;
-use Vizir\KeycloakWebGuard\Models\KeycloakUser;
-use Vizir\KeycloakWebGuard\Facades\KeycloakWeb;
+use Careerum\KeycloakWebGuard\Auth\KeycloakAccessToken;
+use Careerum\KeycloakWebGuard\Exceptions\KeycloakCallbackException;
+use Careerum\KeycloakWebGuard\Models\KeycloakUser;
+use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 use Illuminate\Contracts\Auth\UserProvider;
 
 class KeycloakWebGuard implements Guard

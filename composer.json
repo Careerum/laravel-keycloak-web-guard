@@ -1,7 +1,7 @@
 {
-    "name": "vizir/laravel-keycloak-web-guard",
-    "description": "Simple Keycloak Guard to Laravel Web Routes",
-    "homepage": "https://github.com/Vizir/laravel-keycloak-web-guard",
+    "name": "careerum/laravel-keycloak-web-guard",
+    "description": "Simple Keycloak Guard to Laravel Web Routes With User Sync and User Create Interfaces",
+    "homepage": "https://github.com/careerum/laravel-keycloak-web-guard",
     "license": "MIT",
     "keywords": [
         "laravel",
@@ -13,6 +13,10 @@
         {
             "name": "Mário Valney",
             "email": "mariovalney@gmail.com"
+        },
+        {
+            "name": "Sergey Nechaev",
+            "email": "slow_cheetah@inbox.ru"
         }
     ],
     "minimum-stability": "dev",
@@ -21,16 +25,16 @@
     },
     "autoload": {
         "psr-4": {
-            "Vizir\\KeycloakWebGuard\\": "src/"
+            "Careerum\\KeycloakWebGuard\\": "src/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
-                "Vizir\\KeycloakWebGuard\\KeycloakWebGuardServiceProvider"
+                "Careerum\\KeycloakWebGuard\\KeycloakWebGuardServiceProvider"
             ],
             "aliases": {
-                "KeycloakWeb": "Vizir\\KeycloakWebGuard\\Facades\\KeycloakWeb"
+                "KeycloakWeb": "Careerum\\KeycloakWebGuard\\Facades\\KeycloakWeb"
             }
         }
     }

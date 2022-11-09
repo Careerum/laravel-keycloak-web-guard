@@ -1,7 +1,4 @@
-<p align="center">
-    <img src="https://img.shields.io/packagist/v/vizir/laravel-keycloak-web-guard.svg" />
-    <img src="https://img.shields.io/packagist/dt/vizir/laravel-keycloak-web-guard.svg" />
-</p>
+Fork of [https://github.com/mariovalney/laravel-keycloak-web-guard](https://github.com/mariovalney/laravel-keycloak-web-guard)
 
 # Keycloak Web Guard for Laravel
 
@@ -19,7 +16,7 @@ It works on front. For APIs we recommend [laravel-keycloak-guard](https://github
 This package was tested with:
 
 * Laravel: 5.8 / 7 / 8 / 9
-* Keycloak: 18.0.0
+* Keycloak: 11.0.3 / 18.0.0
 
 Any other version is not guaranteed to work.
 
@@ -39,13 +36,13 @@ Any other version is not guaranteed to work.
 Require the package
 
 ```
-composer require vizir/laravel-keycloak-web-guard
+composer require careerum/laravel-keycloak-web-guard
 ```
 
 If you want to change routes or the default values for Keycloak, publish the config file:
 
 ```
-php artisan vendor:publish  --provider="Vizir\KeycloakWebGuard\KeycloakWebGuardServiceProvider"
+php artisan vendor:publish  --provider="Careerum\KeycloakWebGuard\KeycloakWebGuardServiceProvider"
 
 ```
 
@@ -127,14 +124,16 @@ And change your provider config too:
 'providers' => [
     'users' => [
         'driver' => 'keycloak-users',
-        'model' => Vizir\KeycloakWebGuard\Models\KeycloakUser::class,
+        'model' => App\User::class,
+        'modelSearchField' => 'kc_id',  // field in User model for searching
+        'keyCloakSearchField' => 'sub',
+        'userCreator' => App\Keycloak\UserCreator::class,  // class mast implement Careerum\KeycloakWebGuard\Contracts\CreateUserInterface
+        'syncUser' => App\Keycloak\SyncUser::class,  // class mast implement Careerum\KeycloakWebGuard\Contracts\SyncUserInterface
     ],
 
     // ...
 ]
 ```
-
-**Note:** if you want use another User Model, check the FAQ *How to implement my Model?*.
 
 ## API
 
@@ -198,16 +197,6 @@ This middleware works searching for all roles on default resource (client_id).
 You can extend it and register your own middleware on Kernel.php or just use `Auth::hasRole($roles, $resource)` on your Controller.
 
 ## FAQ
-
-### How to implement my Model?
-
-We registered a new user provider that you configured on `config/auth.php` called "keycloak-users".
-
-In this same configuration you setted the model. So you can register your own model extending `Vizir\KeycloakWebGuard\Models\KeycloakUser` class and changing this configuration.
-
-You can implement your own [User Provider](https://laravel.com/docs/5.8/authentication#adding-custom-user-providers): just remember to implement the `retrieveByCredentials` method receiving the Keycloak Profile information to retrieve a instance of model.
-
-Eloquent/Database User Provider should work well as they will parse the Keycloak Profile and make a "where" to your database. So your user data must match with Keycloak Profile.
 
 ### I cannot find my login form.
 
@@ -297,6 +286,7 @@ Just add the options you would like to `guzzle_options` array on `keycloak-web.p
 
 ## Developers
 
+* Sergey Nechaev
 * Mário Valney [@mariovalney](https://twitter.com/mariovalney)
 * [Vizir Software Studio](https://vizir.com.br)
 

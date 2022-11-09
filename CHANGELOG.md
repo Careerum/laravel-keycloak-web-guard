@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+### [3.1.0] 2022-11-07
+
+* User auto sync interface integration
+* User auto create interface integration
+* Save intended url for login redirect
+
 ### [3.0.1] - 2022-09-28
 
 * Fix #79 (looping on KeycloakCan error). (props: @andrex47)

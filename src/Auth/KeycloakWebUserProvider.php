@@ -1,48 +1,82 @@
 <?php
 
-namespace Vizir\KeycloakWebGuard\Auth;
+namespace Careerum\KeycloakWebGuard\Auth;
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\UserProvider;
-use Vizir\KeycloakWebGuard\Models\KeycloakUser;
 
 class KeycloakWebUserProvider implements UserProvider
 {
     /**
-     * The user model.
+     * The user model path
+     * @var string
+     */
+    protected string $model;
+
+    /**
+     * User model search field
      *
      * @var string
      */
-    protected $model;
+    protected string $userSearchField;
 
     /**
-     * The Constructor
-     *
-     * @param string $model
+     * Key cloak user id field
+     * @var string
      */
-    public function __construct($model)
-    {
+    protected string $keyCloakSearchField;
+
+    /**
+     * The user creator class path
+     * @var string
+     */
+    protected string $userCreator;
+
+    /**
+     * The user sync class path
+     * @var string
+     */
+    protected string $syncUser;
+
+    public function __construct(
+        string $model,
+        string $userSearchField,
+        string $keyCloakSearchField,
+        string $userCreator,
+        string $syncUser
+    ) {
         $this->model = $model;
+        $this->userSearchField = $userSearchField;
+        $this->keyCloakSearchField = $keyCloakSearchField;
+        $this->userCreator = $userCreator;
+        $this->syncUser = $syncUser;
     }
 
     /**
      * Retrieve a user by the given credentials.
      *
      * @param  array  $credentials
-     * @return \Illuminate\Contracts\Auth\Authenticatable|null
+     * @return Authenticatable|null
      */
-    public function retrieveByCredentials(array $credentials)
+    public function retrieveByCredentials(array $credentials): ?Authenticatable
     {
-        $class = '\\'.ltrim($this->model, '\\');
+        if (!$this->validateCredentialsData($credentials)) {
+            return null;
+        }
 
-        return new $class($credentials);
+        $user = $this->getUser($credentials);
+        if (!$user) {
+            return null;
+        }
+
+        return $this->syncUser($user, $credentials);
     }
 
     /**
      * Retrieve a user by their unique identifier.
      *
      * @param  mixed  $identifier
-     * @return \Illuminate\Contracts\Auth\Authenticatable|null
+     * @return Authenticatable|null
      */
     public function retrieveById($identifier)
     {
@@ -54,7 +88,7 @@ class KeycloakWebUserProvider implements UserProvider
      *
      * @param  mixed  $identifier
      * @param  string  $token
-     * @return \Illuminate\Contracts\Auth\Authenticatable|null
+     * @return Authenticatable|null
      */
     public function retrieveByToken($identifier, $token)
     {
@@ -64,7 +98,7 @@ class KeycloakWebUserProvider implements UserProvider
     /**
      * Update the "remember me" token for the given user in storage.
      *
-     * @param  \Illuminate\Contracts\Auth\Authenticatable  $user
+     * @param Authenticatable $user
      * @param  string  $token
      * @return void
      */
@@ -76,12 +110,45 @@ class KeycloakWebUserProvider implements UserProvider
     /**
      * Validate a user against the given credentials.
      *
-     * @param  \Illuminate\Contracts\Auth\Authenticatable  $user
+     * @param Authenticatable $user
      * @param  array  $credentials
      * @return bool
      */
     public function validateCredentials(Authenticatable $user, array $credentials)
     {
         throw new \BadMethodCallException('Unexpected method [validateCredentials] call');
+    }
+
+    private function validateCredentialsData(array $credentials): bool
+    {
+        return isset($credentials[$this->keyCloakSearchField]);
+    }
+
+    private function createUser(array $credentials): ?Authenticatable
+    {
+        /** @var Object $userCreatorClass */
+        $userCreatorClass = '\\' . ltrim($this->userCreator, '\\');
+        $userCreator = new $userCreatorClass();
+
+        return $userCreator::createUser($credentials);
+    }
+
+    private function getUser(array $credentials): ?Authenticatable
+    {
+        $class = '\\' . ltrim($this->model, '\\');
+
+        return $class::where($this->userSearchField, $credentials[$this->keyCloakSearchField])
+            ->firstOr(function () use ($credentials) {
+                return $this->createUser($credentials);
+            });
+    }
+
+    private function syncUser(Authenticatable $user, array $credentials): Authenticatable
+    {
+        /** @var Object $userCreatorClass */
+        $syncUserClass = '\\' . ltrim($this->syncUser, '\\');
+        $syncUser = new $syncUserClass();
+
+        return $syncUser->sync($user, $credentials);
     }
 }

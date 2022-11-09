@@ -1,6 +1,6 @@
 <?php
 
-namespace Vizir\KeycloakWebGuard\Services;
+namespace Careerum\KeycloakWebGuard\Services;
 
 use Exception;
 use GuzzleHttp\ClientInterface;
@@ -10,8 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Route;
-use Vizir\KeycloakWebGuard\Auth\KeycloakAccessToken;
-use Vizir\KeycloakWebGuard\Auth\Guard\KeycloakWebGuard;
+use Careerum\KeycloakWebGuard\Auth\KeycloakAccessToken;
 
 class KeycloakService
 {
