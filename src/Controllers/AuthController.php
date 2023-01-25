@@ -17,10 +17,6 @@ class AuthController extends Controller
      */
     public function login()
     {
-        $referer = request()->headers->get('referer');
-        if ($referer) {
-            redirect()->setIntendedUrl($referer);
-        }
         $url = KeycloakWeb::getLoginUrl();
         KeycloakWeb::saveState();
 
