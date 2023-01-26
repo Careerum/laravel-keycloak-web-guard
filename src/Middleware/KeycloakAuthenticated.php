@@ -24,7 +24,6 @@ class KeycloakAuthenticated extends Authenticate
         return parent::handle($request, $next, $guards);
     }
 
-
     /**
      * Redirect user if it's not authenticated.
      *
@@ -34,5 +33,19 @@ class KeycloakAuthenticated extends Authenticate
     protected function redirectTo($request)
     {
         return route('keycloak.login');
+    }
+
+    protected function unauthenticated($request, array $guards)
+    {
+        $excludedRoutes = [
+            route('keycloak.login'),
+            route('keycloak.callback'),
+        ];
+        $url = request()->url();
+        if (!in_array($url, $excludedRoutes)) {
+            redirect()->setIntendedUrl($url);
+        }
+
+        parent::unauthenticated($request, $guards);
     }
 }

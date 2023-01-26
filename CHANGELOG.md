@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+### [3.1.1] 2023-01-26
+
+* Fixed return back logic
+
 ### [3.1.0] 2022-11-07
 
 * User auto sync interface integration
