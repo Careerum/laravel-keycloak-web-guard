@@ -127,8 +127,8 @@ And change your provider config too:
         'model' => App\User::class,
         'modelSearchField' => 'kc_id',  // field in User model for searching
         'keyCloakSearchField' => 'sub',
-        'userCreator' => App\Keycloak\UserCreator::class,  // class mast implement Careerum\KeycloakWebGuard\Contracts\CreateUserInterface
-        'syncUser' => App\Keycloak\SyncUser::class,  // class mast implement Careerum\KeycloakWebGuard\Contracts\SyncUserInterface
+        'userCreator' => App\Keycloak\UserCreator::class,  // class should implement Careerum\KeycloakWebGuard\Contracts\CreateUserInterface
+        'syncUser' => App\Keycloak\SyncUser::class,  // class should implement Careerum\KeycloakWebGuard\Contracts\SyncUserInterface
     ],
 
     // ...

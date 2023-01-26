@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-### [3.1.1] 2023-01-25
+### [3.1.1] 2023-01-26
 
 * Fixed return back logic
 
