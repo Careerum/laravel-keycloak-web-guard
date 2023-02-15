@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+### [3.2.0] 2023-02-15
+
+* Stateful auth
+
 ### [3.1.1] 2023-01-26
 
 * Fixed return back logic

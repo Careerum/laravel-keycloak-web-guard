@@ -80,7 +80,10 @@ class KeycloakWebUserProvider implements UserProvider
      */
     public function retrieveById($identifier)
     {
-        throw new \BadMethodCallException('Unexpected method [retrieveById] call');
+        $class = '\\' . ltrim($this->model, '\\');
+        $classObject = new $class;
+
+        return $class::where($classObject->getAuthIdentifierName(), $identifier)->first();
     }
 
     /**

@@ -2,6 +2,7 @@
 
 namespace Careerum\KeycloakWebGuard;
 
+use App\User;
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use Illuminate\Session\Middleware\StartSession;
@@ -56,8 +57,9 @@ class KeycloakWebGuardServiceProvider extends ServiceProvider
     {
         // Keycloak Web Guard
         Auth::extend('keycloak-web', function ($app, $name, array $config) {
+            $sessionName = Config::get('keycloak-web.session_name', 'session');
             $provider = Auth::createUserProvider($config['provider']);
-            return new KeycloakWebGuard($provider, $app->request);
+            return new KeycloakWebGuard($sessionName, $provider, $app->request);
         });
 
         // Facades
