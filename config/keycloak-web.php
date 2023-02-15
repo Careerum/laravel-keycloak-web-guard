@@ -63,7 +63,6 @@ return [
     'routes' => [
         'login' => 'login',
         'logout' => 'logout',
-        'register' => 'register',
         'callback' => 'callback',
     ],
 
@@ -73,4 +72,6 @@ return [
     * @link http://docs.guzzlephp.org/en/stable/request-options.html
     */
    'guzzle_options' => [],
+
+    'session_name' => 'session',
 ];

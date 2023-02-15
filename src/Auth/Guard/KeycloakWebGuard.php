@@ -2,8 +2,10 @@
 
 namespace Careerum\KeycloakWebGuard\Auth\Guard;
 
+use Careerum\KeycloakWebGuard\Services\KeycloakService;
 use Illuminate\Contracts\Auth\Authenticatable;
-use Illuminate\Contracts\Auth\Guard;
+use Illuminate\Contracts\Auth\StatefulGuard;
+use Illuminate\Contracts\Session\Session;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Careerum\KeycloakWebGuard\Auth\KeycloakAccessToken;
@@ -12,20 +14,24 @@ use Careerum\KeycloakWebGuard\Models\KeycloakUser;
 use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 use Illuminate\Contracts\Auth\UserProvider;
 
-class KeycloakWebGuard implements Guard
-{
-    /**
-     * @var null|Authenticatable|KeycloakUser
+class KeycloakWebGuard implements StatefulGuard
+{/**
+     * @var null|Authenticatable
      */
     protected $user;
+
+    protected string $sessionName;
+    protected UserProvider $provider;
+    protected Request $request;
 
     /**
      * Constructor.
      *
      * @param Request $request
      */
-    public function __construct(UserProvider $provider, Request $request)
+    public function __construct(string $sessionName, UserProvider $provider, Request $request)
     {
+        $this->sessionName = $sessionName;
         $this->provider = $provider;
         $this->request = $request;
     }
@@ -62,8 +68,14 @@ class KeycloakWebGuard implements Guard
      */
     public function user()
     {
+        if (!is_null($this->user)) {
+            return $this->user;
+        }
+
+        $this->authenticateFromSession();
+
         if (empty($this->user)) {
-            $this->authenticate();
+            $this->authenticateViaKeycloak();
         }
 
         return $this->user;
@@ -112,7 +124,15 @@ class KeycloakWebGuard implements Guard
         $credentials['refresh_token'] = $credentials['refresh_token'] ?? '';
         KeycloakWeb::saveToken($credentials);
 
-        return $this->authenticate();
+        return $this->authenticateViaKeycloak();
+    }
+
+    public function logout()
+    {
+        $this->request->session()->forget($this->getSessionName());
+        KeycloakWeb::forgetToken();
+
+        $this->user = null;
     }
 
     /**
@@ -121,16 +141,16 @@ class KeycloakWebGuard implements Guard
      * @throws KeycloakCallbackException
      * @return boolean
      */
-    public function authenticate()
+    public function authenticateViaKeycloak()
     {
         // Get Credentials
-        $credentials = KeycloakWeb::retrieveToken();
-        if (empty($credentials)) {
+        $tokenCredentials = KeycloakWeb::retrieveToken();
+        if (empty($tokenCredentials)) {
             return false;
         }
 
-        $user = KeycloakWeb::getUserProfile($credentials);
-        if (empty($user)) {
+        $userCredentials = KeycloakWeb::getUserProfile($tokenCredentials);
+        if (empty($userCredentials)) {
             KeycloakWeb::forgetToken();
 
             if (Config::get('app.debug', false)) {
@@ -140,11 +160,7 @@ class KeycloakWebGuard implements Guard
             return false;
         }
 
-        // Provide User
-        $user = $this->provider->retrieveByCredentials($user);
-        $this->setUser($user);
-
-        return true;
+        return $this->attempt($userCredentials);
     }
     
     /**
@@ -191,5 +207,89 @@ class KeycloakWebGuard implements Guard
     public function hasRole($roles, $resource = '')
     {
         return empty(array_diff((array) $roles, $this->roles($resource)));
+    }
+
+    /**
+     * Try to authenticate the user from session
+     *
+     * @return KeycloakUser|Authenticatable|null
+     */
+    protected function authenticateFromSession()
+    {
+        $id = $this->request->session()->get($this->getSessionName());
+        if (!is_null($id)) {
+            $this->user = $this->provider->retrieveById($id);
+        }
+
+        return $this->user;
+    }
+
+    public function getSessionName(): string
+    {
+        return 'login_' . $this->sessionName . '_' . sha1(static::class);
+    }
+
+    public function attempt(array $credentials = [], $remember = false)
+    {
+        $user = $this->provider->retrieveByCredentials($credentials);
+
+        if (is_null($user)) {
+            return false;
+        }
+
+        $this->login($user, $remember);
+
+        return true;
+    }
+
+    public function once(array $credentials = [])
+    {
+        if ($this->validate($credentials)) {
+            $this->setUser($this->lastAttempted);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    public function login(Authenticatable $user, $remember = false)
+    {
+        $this->updateSession($user->getAuthIdentifier());
+
+        $this->setUser($user);
+    }
+
+    public function loginUsingId($id, $remember = false)
+    {
+        if (!is_null($user = $this->provider->retrieveById($id))) {
+            $this->login($user, $remember);
+
+            return $user;
+        }
+
+        return false;
+    }
+
+    public function onceUsingId($id)
+    {
+        if (!is_null($user = $this->provider->retrieveById($id))) {
+            $this->setUser($user);
+
+            return $user;
+        }
+
+        return false;
+    }
+
+    public function viaRemember()
+    {
+        throw new \BadMethodCallException('Unexpected method [viaRemember] call');
+    }
+
+    protected function updateSession(string $id)
+    {
+        $this->request->session()->put($this->getSessionName(), $id);
+        $this->request->session()->migrate(true);
     }
 }

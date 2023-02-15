@@ -31,18 +31,7 @@ class AuthController extends Controller
     public function logout()
     {
         $url = KeycloakWeb::getLogoutUrl();
-        KeycloakWeb::forgetToken();
-        return redirect($url);
-    }
-
-    /**
-     * Redirect to register
-     *
-     * @return view
-     */
-    public function register()
-    {
-        $url = KeycloakWeb::getRegisterUrl();
+        Auth::logout();
         return redirect($url);
     }
 
