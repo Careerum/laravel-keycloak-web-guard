@@ -56,7 +56,6 @@ After publishing `config/keycloak-web.php` file, you can change the routes:
 'routes' => [
     'login' => 'login',
     'logout' => 'logout',
-    'register' => 'register',
     'callback' => 'callback',
 ]
 ```
@@ -137,7 +136,7 @@ And change your provider config too:
 
 ## API
 
-We implement the `Illuminate\Contracts\Auth\Guard`. So, all Laravel default methods will be available.
+We implement the `Illuminate\Contracts\Auth\StatefulGuard`. So, all Laravel default methods will be available.
 
 Ex: `Auth::user()` returns the authenticated user.
 
