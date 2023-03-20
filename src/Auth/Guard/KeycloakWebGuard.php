@@ -290,6 +290,5 @@ class KeycloakWebGuard implements StatefulGuard
     protected function updateSession(string $id)
     {
         $this->request->session()->put($this->getSessionName(), $id);
-        $this->request->session()->migrate(true);
     }
 }
