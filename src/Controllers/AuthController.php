@@ -2,6 +2,8 @@
 
 namespace Careerum\KeycloakWebGuard\Controllers;
 
+use Careerum\KeycloakWebGuard\Services\RetryService;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
@@ -10,6 +12,13 @@ use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 
 class AuthController extends Controller
 {
+    private RetryService $retryService;
+
+    public function __construct(RetryService $retryService)
+    {
+        $this->retryService = $retryService;
+    }
+
     /**
      * Redirect to login
      *
@@ -40,7 +49,7 @@ class AuthController extends Controller
      *
      * @throws KeycloakCallbackException
      *
-     * @return view
+     * @return view|RedirectResponse
      */
     public function callback(Request $request)
     {
@@ -55,9 +64,7 @@ class AuthController extends Controller
         // Check given state to mitigate CSRF attack
         $state = $request->input('state');
         if (empty($state) || ! KeycloakWeb::validateState($state)) {
-            KeycloakWeb::forgetState();
-
-            throw new KeycloakCallbackException('Invalid state');
+            return $this->retryService->retry();
         }
 
         // Change code for token

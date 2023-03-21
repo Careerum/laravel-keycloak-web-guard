@@ -129,7 +129,7 @@ class KeycloakWebGuard implements StatefulGuard
 
     public function logout()
     {
-        $this->request->session()->forget($this->getSessionName());
+        $this->request->session()->remove($this->getSessionName());
         KeycloakWeb::forgetToken();
 
         $this->user = null;

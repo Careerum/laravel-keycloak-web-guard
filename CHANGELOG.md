@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+### [3.2.2] 2023-03-21
+
+* Remove session instead forget (fix orphan sessions after auth)
+* Auto retry on incorrect state
+
 ### [3.2.1] 2023-03-21
 
 * Disable recreating session on login
