@@ -9,6 +9,7 @@ use Illuminate\Http\RedirectResponse;
 class RetryService
 {
     const RETRY_LOGIN_QUERY_NAME = 'retry_login';
+    const RETRY_LOGIN_TIMEOUT = 30;
 
     /**
      * @return RedirectResponse
@@ -46,7 +47,7 @@ class RetryService
 
     private function canRetry(array $query): void
     {
-        if (isset($query[self::RETRY_LOGIN_QUERY_NAME])) {
+        if (isset($query[self::RETRY_LOGIN_QUERY_NAME]) && time() - $query[self::RETRY_LOGIN_QUERY_NAME] < self::RETRY_LOGIN_TIMEOUT) {
             KeycloakWeb::forgetState();
 
             throw new KeycloakCallbackException('Invalid state');
@@ -57,7 +58,7 @@ class RetryService
     {
         $parsedUrl = parse_url($url);
         parse_str($parsedUrl['query'] ?? '', $parsedQuery);
-        $parsedQuery[self::RETRY_LOGIN_QUERY_NAME] = 1;
+        $parsedQuery[self::RETRY_LOGIN_QUERY_NAME] = time();
         $parsedUrl['query'] = http_build_query($parsedQuery);
 
         $scheme = isset($parsedUrl['scheme']) ? "{$parsedUrl['scheme']}://" : '';
