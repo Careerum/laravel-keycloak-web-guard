@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ### [3.2.3] 2023-04-19
 
 * Retry logic improved
+* Removed url saving logic for return. This is added in laravel 6+ already
 
 ### [3.2.2] 2023-03-21
 
