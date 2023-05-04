@@ -32,6 +32,7 @@ class KeycloakAuthenticated extends Authenticate
      */
     protected function redirectTo($request)
     {
+        \Log::debug("[AuthPage][" . request()->ip() . "] Redirect from " . $request->fullUrl());
         return route('keycloak.login');
     }
 }

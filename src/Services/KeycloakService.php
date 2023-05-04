@@ -400,6 +400,7 @@ class KeycloakService
      */
     public function saveState()
     {
+        \Log::debug("[Auth][" . request()->ip() . "] Save state " . $this->state);
         session()->put(self::KEYCLOAK_SESSION_STATE, $this->state);
         session()->save();
     }
@@ -411,6 +412,7 @@ class KeycloakService
      */
     public function forgetState()
     {
+        \Log::debug("[Auth][" . request()->ip() . "] Save state " . $this->state);
         session()->forget(self::KEYCLOAK_SESSION_STATE);
         session()->save();
     }

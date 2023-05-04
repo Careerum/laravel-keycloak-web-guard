@@ -26,6 +26,7 @@ class AuthController extends Controller
      */
     public function login()
     {
+        \Log::debug("[AuthPage][" . request()->ip() . "] Login");
         $url = KeycloakWeb::getLoginUrl();
         KeycloakWeb::saveState();
 
@@ -53,6 +54,7 @@ class AuthController extends Controller
      */
     public function callback(Request $request)
     {
+        \Log::debug("[AuthPage][" . request()->ip() . "] Callback");
         // Check for errors from Keycloak
         if (! empty($request->input('error'))) {
             $error = $request->input('error_description');
@@ -64,6 +66,7 @@ class AuthController extends Controller
         // Check given state to mitigate CSRF attack
         $state = $request->input('state');
         if (empty($state) || ! KeycloakWeb::validateState($state)) {
+            \Log::debug("[Auth][" . request()->ip() . "] Incorrect state " . $state);
             return $this->retryService->retry();
         }
 
