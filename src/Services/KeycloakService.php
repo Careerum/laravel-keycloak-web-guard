@@ -344,7 +344,7 @@ class KeycloakService
         } catch (GuzzleException $e) {
             $this->logException($e);
         } catch (Exception $e) {
-            Log::error('[Keycloak Service] ' . print_r($e->getMessage(), true));
+            Log::error('[Keycloak Service] ' . $e->getMessage());
         }
 
         return $user;
@@ -530,7 +530,9 @@ class KeycloakService
         } catch (GuzzleException $e) {
             $this->logException($e);
 
-            throw new Exception('[Keycloak Error] It was not possible to load OpenId configuration: ' . $e->getMessage());
+            // The discovery request is an unauthenticated GET of a public
+            // document, so chaining the transport error exposes no secrets.
+            throw new Exception('[Keycloak Error] It was not possible to load OpenId configuration.', 0, $e);
         }
 
         // Save cache
@@ -572,23 +574,38 @@ class KeycloakService
     /**
      * Log a GuzzleException
      *
+     * Logs only safe operational metadata. Request/response headers and
+     * bodies never reach the log: the requests carry the client secret,
+     * authorization codes and refresh tokens, and the token endpoint
+     * response carries the issued tokens.
+     *
      * @param  GuzzleException $e
      * @return void
      */
     protected function logException(GuzzleException $e)
     {
-        // Guzzle 7
-        if (! method_exists($e, 'getResponse') || empty($e->getResponse())) {
-            Log::error('[Keycloak Service] ' . $e->getMessage());
-            return;
-        }
-
-        $error = [
-            'request' => method_exists($e, 'getRequest') ? $e->getRequest() : '',
-            'response' => $e->getResponse()->getBody()->getContents(),
+        $context = [
+            'exception' => get_class($e),
         ];
 
-        Log::error('[Keycloak Service] ' . print_r($error, true));
+        $request = method_exists($e, 'getRequest') ? $e->getRequest() : null;
+        if ($request) {
+            $context['request_method'] = $request->getMethod();
+
+            $uri = $request->getUri();
+            // Scheme, host, port and path only: no userinfo, query or fragment.
+            $context['request_url'] = (string) $uri->withUserInfo('')->withQuery('')->withFragment('');
+        }
+
+        $response = method_exists($e, 'getResponse') ? $e->getResponse() : null;
+        if ($response) {
+            $context['response_status'] = $response->getStatusCode();
+        }
+
+        // The exception message is never logged: Guzzle appends a summary of
+        // the response body to bad-response messages, and transport errors
+        // carry arbitrary handler text including the full request URI.
+        Log::error('[Keycloak Service] Keycloak request failed', $context);
     }
 
     /**
