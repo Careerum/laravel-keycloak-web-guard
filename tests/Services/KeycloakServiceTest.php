@@ -254,14 +254,20 @@ class KeycloakServiceTest extends TestCase
 
     public function testDiscoveryFailureThrowsWithoutLeakingTheTransportError(): void
     {
-        $this->mockHandler->append(new ConnectException('cURL error 6: Could not resolve host', new Request('GET', 'https://keycloak.example.com/realms/test-realm/.well-known/openid-configuration')));
+        $transportError = new ConnectException('cURL error 6: Could not resolve host', new Request('GET', 'https://keycloak.example.com/realms/test-realm/.well-known/openid-configuration'));
+        $this->mockHandler->append($transportError);
 
         Log::shouldReceive('error')->once();
 
-        $this->expectException(\Exception::class);
-        $this->expectExceptionMessage('It was not possible to load OpenId configuration');
-
-        $this->service()->getLoginUrl();
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected the discovery failure to throw.');
+        } catch (\Exception $e) {
+            $this->assertStringContainsString('It was not possible to load OpenId configuration', $e->getMessage());
+            $this->assertStringNotContainsString('cURL error', $e->getMessage());
+            // The cause stays reachable through the exception chain.
+            $this->assertSame($transportError, $e->getPrevious());
+        }
     }
 
     private function expiredCredentials(): array
