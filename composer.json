@@ -22,7 +22,7 @@
     "minimum-stability": "dev",
     "prefer-stable": true,
     "require": {
-        "guzzlehttp/guzzle": "^6.5 || ^7.0 || ^8.0"
+        "guzzlehttp/guzzle": "^7.0 || ^8.0"
     },
     "require-dev": {
         "orchestra/testbench": "^11.0",
