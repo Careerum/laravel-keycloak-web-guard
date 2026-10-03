@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: PHPUnit (Guzzle ${{ matrix.guzzle }})
+    # GitHub-hosted: the org's self-hosted runner group does not serve public
+    # repositories. ubuntu-24.04 ships PHP 8.3 and Composer; only actions/*
+    # are used, no community setup actions.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both majors the package declares support for, at their latest
+        # release, so a consumer on either resolves to a tested combination.
+        guzzle: ['7.*', '8.*']
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          php -v
+          composer --version
+
+      - name: Resolve dependencies for Guzzle ${{ matrix.guzzle }}
+        run: composer update --with "guzzlehttp/guzzle:${{ matrix.guzzle }}" --with-all-dependencies --prefer-dist --no-interaction --no-progress
+
+      - name: Installed Guzzle
+        run: composer show guzzlehttp/guzzle | grep -E '^versions'
+
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-publish
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit

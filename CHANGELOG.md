@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+### [3.4.0] Unreleased
+
+* Support Guzzle 8 (`^7.0 || ^8.0`)
+* Drop Guzzle 6 (end of life since 2022): CI covers Guzzle 7 and 8 only, so the constraint no longer advertises an untested major
+* Security: Keycloak HTTP failures no longer log request/response headers or bodies (client secret, authorization codes, tokens); only the exception class, method, URL without query and status code are logged
+* Fix: logging a transport failure without a response no longer throws
+* Add PHPUnit test suite and CI on Guzzle 7 and 8
+
 ### [3.2.3] 2023-04-19
 
 * Retry logic improved
