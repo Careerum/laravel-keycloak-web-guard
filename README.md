@@ -224,7 +224,7 @@ Route::group(['middleware' => 'keycloak-web'], function () {
 
 ### Where the access/refresh tokens and state are persisted?
 
-On session. We recommend implement the database driver if you have load balance.
+On session. We recommend implementing the database driver if you have load balancing. On authenticated requests the guard refreshes an expired access token using the stored refresh token. If refresh fails, the local login session is cleared and the user must sign in again (including when Keycloak is temporarily unavailable). Sessions created without Keycloak token credentials retain their existing behavior.
 
 ### What's a state?
 

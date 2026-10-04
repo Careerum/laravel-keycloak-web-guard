@@ -74,6 +74,12 @@ class KeycloakWebGuard implements StatefulGuard
 
         $this->authenticateFromSession();
 
+        if (!empty($this->user) && !$this->refreshSessionToken()) {
+            $this->request->session()->forget($this->getSessionName());
+            KeycloakWeb::forgetToken();
+            $this->user = null;
+        }
+
         if (empty($this->user)) {
             $this->authenticateViaKeycloak();
         }
@@ -207,6 +213,20 @@ class KeycloakWebGuard implements StatefulGuard
     public function hasRole($roles, $resource = '')
     {
         return empty(array_diff((array) $roles, $this->roles($resource)));
+    }
+
+    protected function refreshSessionToken(): bool
+    {
+        $credentials = KeycloakWeb::retrieveToken();
+        if (empty($credentials) || empty($credentials['access_token']) || empty($credentials['refresh_token'])) {
+            return true;
+        }
+
+        if (!(new KeycloakAccessToken($credentials))->hasExpired()) {
+            return true;
+        }
+
+        return !empty(KeycloakWeb::refreshTokenIfNeeded($credentials));
     }
 
     /**
