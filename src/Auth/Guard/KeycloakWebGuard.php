@@ -218,12 +218,16 @@ class KeycloakWebGuard implements StatefulGuard
     protected function refreshSessionToken(): bool
     {
         $credentials = KeycloakWeb::retrieveToken();
-        if (empty($credentials) || empty($credentials['access_token']) || empty($credentials['refresh_token'])) {
+        if (empty($credentials) || empty($credentials['access_token'])) {
             return true;
         }
 
         if (!(new KeycloakAccessToken($credentials))->hasExpired()) {
             return true;
+        }
+
+        if (empty($credentials['refresh_token'])) {
+            return false;
         }
 
         try {

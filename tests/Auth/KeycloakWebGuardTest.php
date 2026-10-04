@@ -77,6 +77,7 @@ class KeycloakWebGuardTest extends TestCase
 
         // The renewed credentials replace the expired ones in the session.
         $this->assertSame($new['access_token'], KeycloakWeb::retrieveToken()['access_token']);
+        $this->assertSame('original-id-token', KeycloakWeb::retrieveToken()['id_token']);
 
         // A separate request uses the renewed token without another refresh.
         $this->assertSame($user, $this->guard($user)->user());
@@ -102,6 +103,18 @@ class KeycloakWebGuardTest extends TestCase
 
         $this->assertSame($user, $resolved);
         $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testItEndsAnExpiredSessionWithoutARefreshToken(): void
+    {
+        $credentials = $this->expiredCredentials();
+        unset($credentials['refresh_token']);
+        $user = $this->loggedInUserWithToken($credentials);
+
+        $this->assertNull($this->guard($user)->user());
+        $this->assertNull(session()->get($this->guardSessionKey()));
+        $this->assertNull(KeycloakWeb::retrieveToken());
+        $this->assertSame(1, $this->mockHandler->count());
     }
 
     public function testItKeepsATokenlessSession(): void
@@ -163,6 +176,7 @@ class KeycloakWebGuardTest extends TestCase
         return [
             'access_token' => $this->jwt(['exp' => time() - 60]),
             'refresh_token' => 'old-refresh-token',
+            'id_token' => 'original-id-token',
         ];
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Careerum\KeycloakWebGuard\Tests\Services;
 
 use Careerum\KeycloakWebGuard\Services\KeycloakService;
+use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 use Careerum\KeycloakWebGuard\Tests\TestCase;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Psr7\Request;
@@ -118,6 +119,7 @@ class KeycloakServiceTest extends TestCase
         $user = $this->service()->getUserProfile($this->expiredCredentials());
 
         $this->assertSame('user-uuid', $user['sub']);
+        $this->assertSame($this->expiredCredentials()['id_token'], KeycloakWeb::retrieveToken()['id_token']);
 
         // userinfo must be fetched with the renewed access token, not the expired one
         $this->assertSame('Bearer renewed.jwt.token', $this->mockHandler->getLastRequest()->getHeaderLine('Authorization'));
