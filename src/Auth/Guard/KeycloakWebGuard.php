@@ -226,7 +226,12 @@ class KeycloakWebGuard implements StatefulGuard
             return true;
         }
 
-        return !empty(KeycloakWeb::refreshTokenIfNeeded($credentials));
+        try {
+            return !empty(KeycloakWeb::refreshTokenIfNeeded($credentials));
+        } catch (\Exception $e) {
+            // Discovery failures can occur before the token request's HTTP error handler.
+            return false;
+        }
     }
 
     /**

@@ -140,6 +140,22 @@ class KeycloakWebGuardTest extends TestCase
         ];
     }
 
+    public function testItEndsTheSessionWhenDiscoveryFails(): void
+    {
+        $user = $this->loggedInUserWithToken([
+            'access_token' => $this->jwt(['exp' => time() - 60]),
+            'refresh_token' => 'old-refresh-token',
+        ]);
+        $this->mockHandler->append(new \GuzzleHttp\Exception\ConnectException(
+            'cURL error 7: Connection refused',
+            new \GuzzleHttp\Psr7\Request('GET', self::BASE_URL . '/realms/' . self::REALM . '/.well-known/openid-configuration'),
+        ));
+
+        $this->assertNull($this->guard($user)->user());
+        $this->assertNull(session()->get($this->guardSessionKey()));
+        $this->assertNull(KeycloakWeb::retrieveToken());
+    }
+
     private function expiredCredentials(): array
     {
         $this->queueOpenIdConfiguration();
