@@ -83,6 +83,17 @@ class KeycloakWebGuardTest extends TestCase
         $this->assertSame(0, $this->mockHandler->count());
     }
 
+    public function testItRefreshesAMalformedAccessTokenWithoutEmittingWarnings(): void
+    {
+        $credentials = $this->expiredCredentials();
+        $credentials['access_token'] = 'opaque-token';
+        $user = $this->loggedInUserWithToken($credentials);
+        $new = $this->queueRefreshResponse();
+
+        $this->assertSame($user, $this->guard($user)->user());
+        $this->assertSame($new['access_token'], KeycloakWeb::retrieveToken()['access_token']);
+    }
+
     public function testItDoesNotRefreshAValidToken(): void
     {
         $user = $this->loggedInUserWithToken($this->validCredentials());
