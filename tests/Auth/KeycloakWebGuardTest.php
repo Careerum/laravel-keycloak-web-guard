@@ -98,7 +98,7 @@ class KeycloakWebGuardTest extends TestCase
         $this->assertSessionRequestOrdering(true);
     }
 
-    public function testAPlainSessionWriterCannotRestoreAnOldRefreshToken(): void
+    public function testPlainSessionWriterKeepsRotatedTokenAfterSerializedRefresh(): void
     {
         $this->assertSessionRequestOrdering(false);
     }
