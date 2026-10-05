@@ -48,6 +48,12 @@ php artisan vendor:publish  --provider="Careerum\KeycloakWebGuard\KeycloakWebGua
 
 ## Configuration
 
+### Session concurrency for token refresh
+
+The guard refreshes expired access tokens stored in the Laravel session. Hosts must enable Laravel's global session blocking (`session.block = true`) with a shared lock store available to every application replica. The lock must cover the entire HTTP request, from the initial session read through its final save. Apply this to all routes that use the session, including login callback, logout, and routes that write session data without calling the guard. A guard-local refresh lock does not protect against another request overwriting the refreshed session with an older snapshot.
+
+Use a distributed lock backend (for example, a database cache lock table shared by all replicas), and configure the lock lease longer than the maximum request duration with an appropriate wait timeout. If lock acquisition fails or times out, the request must stop before its controller runs; do not treat this as a token refresh failure or clear the user's session. Refresh safety is not guaranteed if the host does not provide these session-blocking prerequisites.
+
 After publishing `config/keycloak-web.php` file, you can change the routes:
 
 ```php
