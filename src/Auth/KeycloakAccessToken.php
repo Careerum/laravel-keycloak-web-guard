@@ -188,9 +188,15 @@ class KeycloakAccessToken
         }
 
         $token = explode('.', $token);
+        if (! isset($token[1])) {
+            return [];
+        }
+
         $token = $this->base64UrlDecode($token[1]);
 
-        return json_decode($token, true);
+        $decoded = json_decode($token, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**

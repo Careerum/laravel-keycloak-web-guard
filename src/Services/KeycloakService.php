@@ -549,7 +549,7 @@ class KeycloakService
      * @param  array $credentials
      * @return array
      */
-    protected function refreshTokenIfNeeded($credentials)
+    public function refreshTokenIfNeeded($credentials)
     {
         if (! is_array($credentials) || empty($credentials['access_token']) || empty($credentials['refresh_token'])) {
             return $credentials;
@@ -560,13 +560,15 @@ class KeycloakService
             return $credentials;
         }
 
-        $credentials = $this->refreshAccessToken($credentials);
+        $renewed = $this->refreshAccessToken($credentials);
 
-        if (empty($credentials['access_token'])) {
+        if (empty($renewed['access_token'])) {
             $this->forgetToken();
             return [];
         }
 
+        // A refresh response may omit id_token. Keep the previous one for logout.
+        $credentials = array_merge($credentials, $renewed);
         $this->saveToken($credentials);
         return $credentials;
     }

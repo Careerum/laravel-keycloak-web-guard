@@ -15,10 +15,13 @@ It works on front. For APIs we recommend [laravel-keycloak-guard](https://github
 
 This package was tested with:
 
-* Laravel: 5.8 / 7 / 8 / 9
-* Keycloak: 11.0.3 / 18.0.0
+* Laravel: 10 / 11 / 12
+* Keycloak: 18.0.0 / 26.x
 
-Any other version is not guaranteed to work.
+Any other version is not guaranteed to work. The refresh-safety prerequisites
+below additionally require a Laravel version whose `StartSession` supports
+configurable session blocking (Laravel 10+); older releases cannot guarantee
+request serialization for token refresh.
 
 *This is project is open source and maintained on my free time. So, if you have any problem you can open a Issue with all details (laravel version, keycloak version, the description of problem...) and I'll be happy to try to help.*
 
@@ -47,6 +50,12 @@ php artisan vendor:publish  --provider="Careerum\KeycloakWebGuard\KeycloakWebGua
 ```
 
 ## Configuration
+
+### Session concurrency for token refresh
+
+The guard refreshes expired access tokens stored in the Laravel session. Hosts must enable Laravel's global session blocking (`session.block = true`) with a shared lock store available to every application replica. The lock must cover the entire HTTP request, from the initial session read through its final save. Apply this to all routes that use the session, including login callback, logout, and routes that write session data without calling the guard. A guard-local refresh lock does not protect against another request overwriting the refreshed session with an older snapshot.
+
+Use a distributed lock backend (for example, a database cache lock table shared by all replicas), and configure the lock lease longer than the maximum request duration with an appropriate wait timeout. Laravel versions before 10 hard-code or lack the blocking lease and wait settings, so this requirement is only satisfiable on Laravel 10+. If lock acquisition fails or times out, the request must stop before its controller runs; do not treat this as a token refresh failure or clear the user's session. Refresh safety is not guaranteed if the host does not provide these session-blocking prerequisites.
 
 After publishing `config/keycloak-web.php` file, you can change the routes:
 
@@ -224,7 +233,7 @@ Route::group(['middleware' => 'keycloak-web'], function () {
 
 ### Where the access/refresh tokens and state are persisted?
 
-On session. We recommend implement the database driver if you have load balance.
+On session. We recommend implementing the database driver if you have load balancing. On authenticated requests the guard refreshes an expired access token using the stored refresh token. If refresh fails, the local login session is cleared and the user must sign in again (including when Keycloak is temporarily unavailable). Sessions created without Keycloak token credentials retain their existing behavior.
 
 ### What's a state?
 
