@@ -5,6 +5,9 @@ namespace Careerum\KeycloakWebGuard\Services;
 use Exception;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
+use GuzzleHttp\Exception\ConnectException;
+use Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException;
+use Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
@@ -58,6 +61,9 @@ class KeycloakService
      * @var array
      */
     protected $openid;
+
+    /** @var int|null */
+    protected $openidFetchedAt;
 
     /**
      * Keycloak OpenId Cache Configuration
@@ -341,6 +347,8 @@ class KeycloakService
 
             // Validate retrieved user is owner of token
             $token->validateSub($user['sub'] ?? '');
+        } catch (OpenIdConfigurationUnavailableException $e) {
+            throw $e;
         } catch (GuzzleException $e) {
             $this->logException($e);
         } catch (Exception $e) {
@@ -489,8 +497,15 @@ class KeycloakService
      */
     protected function getOpenIdValue($key)
     {
-        if (! $this->openid) {
+        if ($this->cacheOpenid) {
+            // Cache entry keeps the original fetch timestamp: never extend stale.
+            return Arr::get($this->getOpenIdConfiguration(), $key);
+        }
+        $freshTtl = max(1, (int) Config::get('keycloak-web.openid_fresh_ttl', 300));
+        if ($this->openid === null || $this->openidFetchedAt === null
+            || time() >= $this->openidFetchedAt + $freshTtl) {
             $this->openid = $this->getOpenIdConfiguration();
+            $this->openidFetchedAt = time();
         }
 
         return Arr::get($this->openid, $key);
@@ -503,44 +518,151 @@ class KeycloakService
      */
     protected function getOpenIdConfiguration()
     {
-        $cacheKey = 'keycloak_web_guard_openid-' . $this->realm . '-' . md5($this->baseUrl);
-
-        // From cache?
-        if ($this->cacheOpenid) {
-            $configuration = Cache::get($cacheKey, []);
-
-            if (! empty($configuration)) {
-                return $configuration;
-            }
+        // Uncached path: no shared store or lock involvement.
+        if (! $this->cacheOpenid) {
+            return $this->fetchOpenIdConfiguration();
         }
-
-        // Request if cache empty or not using
-        $url = $this->baseUrl . '/realms/' . $this->realm;
-        $url = $url . '/.well-known/openid-configuration';
-
-        $configuration = [];
 
         try {
-            $response = $this->httpClient->request('GET', $url);
+            $cache = Cache::store(Config::get('keycloak-web.openid_cache_store'));
+        } catch (\Throwable $e) {
+            throw new OpenIdConfigurationUnavailableException($e);
+        }
+        $key = 'keycloak_web_guard_openid_v2_' . hash('sha256', $this->baseUrl . "\0" . $this->realm);
+        $freshTtl = max(1, (int) Config::get('keycloak-web.openid_fresh_ttl', 300));
+        $staleTtl = max(0, (int) Config::get('keycloak-web.openid_stale_ttl', 3600));
+        $entry = $cache->get($key);
+        $stale = $this->cachedDiscovery($entry, $freshTtl, $staleTtl);
 
-            if ($response->getStatusCode() === 200) {
-                $configuration = $response->getBody()->getContents();
-                $configuration = json_decode($configuration, true);
+        if ($stale !== null && time() < $entry['fetched_at'] + $freshTtl) {
+            return $stale;
+        }
+
+        // A shared lock prevents every replica from refreshing at once. A waiter
+        // can use verified stale data without blocking its authentication flow.
+        $lock = $cache->lock($key . '_lock', 10);
+        if (! $lock->get()) {
+            if ($stale !== null) {
+                return $stale;
             }
-        } catch (GuzzleException $e) {
-            $this->logException($e);
-
-            // The discovery request is an unauthenticated GET of a public
-            // document, so chaining the transport error exposes no secrets.
-            throw new Exception('[Keycloak Error] It was not possible to load OpenId configuration.', 0, $e);
+            try {
+                $lock->block(1);
+            } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+                throw new OpenIdConfigurationUnavailableException($e);
+            }
         }
 
-        // Save cache
-        if ($this->cacheOpenid) {
-            Cache::put($cacheKey, $configuration);
+        try {
+            // Another worker may have populated the cache while we waited.
+            $entry = $cache->get($key);
+            $current = $this->cachedDiscovery($entry, $freshTtl, $staleTtl);
+            if ($current !== null && time() < $entry['fetched_at'] + $freshTtl) {
+                return $current;
+            }
+            $stale = $current ?? $stale;
+
+            try {
+                $configuration = $this->fetchOpenIdConfiguration();
+            } catch (OpenIdConfigurationUnavailableException $e) {
+                if ($stale !== null && ($e->retryable() || $e instanceof InvalidOpenIdConfigurationException)) {
+                    Log::warning('[Keycloak Service] OpenID discovery refresh failed; using stale configuration', [
+                        'upstream_status' => $e->getUpstreamStatus(),
+                        'retryable' => $e->retryable(),
+                    ]);
+                    return $stale;
+                }
+                throw $e;
+            }
+
+            $cache->put($key, ['configuration' => $configuration, 'fetched_at' => time()], $freshTtl + $staleTtl);
+            return $configuration;
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function cachedDiscovery($entry, int $freshTtl, int $staleTtl): ?array
+    {
+        if (! is_array($entry) || ! isset($entry['fetched_at'], $entry['configuration'])
+            || ! is_int($entry['fetched_at']) || $entry['fetched_at'] > time()
+            || time() >= $entry['fetched_at'] + $freshTtl + $staleTtl
+            || ! $this->validDiscovery($entry['configuration'])) {
+            return null;
         }
 
-        return $configuration;
+        return $entry['configuration'];
+    }
+
+    private function fetchOpenIdConfiguration(): array
+    {
+        $issuer = $this->baseUrl . '/realms/' . rawurlencode($this->realm);
+        $url = $issuer . '/.well-known/openid-configuration';
+        $budget = max(1, min(8, (float) Config::get('keycloak-web.openid_retry_budget', 6)));
+        $deadline = microtime(true) + $budget;
+        $cause = null;
+
+        $status = null;
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $remaining = $deadline - microtime(true);
+            if ($remaining <= 0) {
+                break;
+            }
+            try {
+                $response = $this->httpClient->request('GET', $url, [
+                    'timeout' => min(3, $remaining),
+                    'connect_timeout' => min(2, $remaining),
+                    'http_errors' => false,
+                    'allow_redirects' => false,
+                ]);
+                if ($response->getStatusCode() === 200) {
+                    $configuration = json_decode((string) $response->getBody(), true);
+                    if ($this->validDiscovery($configuration)) {
+                        return $configuration;
+                    }
+                    // Invalid configuration is not a transient transport error.
+                    throw new InvalidOpenIdConfigurationException();
+                }
+                $status = $response->getStatusCode();
+                if (! in_array($status, [502, 503, 504], true)) {
+                    break;
+                }
+            } catch (GuzzleException $e) {
+                $cause = $e;
+                $this->logException($e);
+                if (! ($e instanceof ConnectException)) {
+                    break;
+                }
+            }
+            if ($attempt < 2 && $deadline - microtime(true) > 0.2) {
+                // Full jitter backoff bounded by the remaining budget.
+                usleep(random_int(50000, 200000));
+            }
+        }
+
+        Log::warning('[Keycloak Service] OpenID discovery unavailable', ['upstream_status' => $status]);
+        throw new OpenIdConfigurationUnavailableException($cause, $status, $status === null || in_array($status, [502, 503, 504], true));
+    }
+
+    private function validDiscovery($configuration): bool
+    {
+        if (! is_array($configuration)) {
+            return false;
+        }
+        $issuer = $this->baseUrl . '/realms/' . rawurlencode($this->realm);
+        if (($configuration['issuer'] ?? null) !== $issuer) {
+            return false;
+        }
+        foreach (['authorization_endpoint', 'token_endpoint', 'userinfo_endpoint', 'end_session_endpoint', 'jwks_uri'] as $field) {
+            $endpoint = $configuration[$field] ?? null;
+            if (! is_string($endpoint) || ! filter_var($endpoint, FILTER_VALIDATE_URL)
+                || parse_url($endpoint, PHP_URL_SCHEME) !== 'https'
+                || parse_url($endpoint, PHP_URL_HOST) !== parse_url($issuer, PHP_URL_HOST)
+                || parse_url($endpoint, PHP_URL_USER) !== null
+                || parse_url($endpoint, PHP_URL_PASS) !== null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
