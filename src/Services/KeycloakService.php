@@ -528,6 +528,17 @@ class KeycloakService
         } catch (\Throwable $e) {
             throw new OpenIdConfigurationUnavailableException($e);
         }
+        try {
+            return $this->getCachedOpenIdConfiguration($cache);
+        } catch (OpenIdConfigurationUnavailableException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new OpenIdConfigurationUnavailableException($e);
+        }
+    }
+
+    private function getCachedOpenIdConfiguration($cache): array
+    {
         $key = 'keycloak_web_guard_openid_v2_' . hash('sha256', $this->baseUrl . "\0" . $this->realm);
         $freshTtl = max(1, (int) Config::get('keycloak-web.openid_fresh_ttl', 300));
         $staleTtl = max(0, (int) Config::get('keycloak-web.openid_stale_ttl', 3600));
@@ -596,6 +607,12 @@ class KeycloakService
     private function fetchOpenIdConfiguration(): array
     {
         $issuer = $this->baseUrl . '/realms/' . rawurlencode($this->realm);
+        if (parse_url($issuer, PHP_URL_SCHEME) !== 'https'
+            || parse_url($issuer, PHP_URL_HOST) === null
+            || parse_url($issuer, PHP_URL_USER) !== null
+            || parse_url($issuer, PHP_URL_PASS) !== null) {
+            throw new InvalidOpenIdConfigurationException();
+        }
         $url = $issuer . '/.well-known/openid-configuration';
         $budget = max(1, min(8, (float) Config::get('keycloak-web.openid_retry_budget', 6)));
         $deadline = microtime(true) + $budget;
@@ -649,7 +666,9 @@ class KeycloakService
             return false;
         }
         $issuer = $this->baseUrl . '/realms/' . rawurlencode($this->realm);
-        if (($configuration['issuer'] ?? null) !== $issuer) {
+        if (parse_url($issuer, PHP_URL_SCHEME) !== 'https'
+            || parse_url($issuer, PHP_URL_HOST) === null
+            || ($configuration['issuer'] ?? null) !== $issuer) {
             return false;
         }
         foreach (['authorization_endpoint', 'token_endpoint', 'userinfo_endpoint', 'end_session_endpoint', 'jwks_uri'] as $field) {
@@ -657,6 +676,7 @@ class KeycloakService
             if (! is_string($endpoint) || ! filter_var($endpoint, FILTER_VALIDATE_URL)
                 || parse_url($endpoint, PHP_URL_SCHEME) !== 'https'
                 || parse_url($endpoint, PHP_URL_HOST) !== parse_url($issuer, PHP_URL_HOST)
+                || parse_url($endpoint, PHP_URL_PORT) !== parse_url($issuer, PHP_URL_PORT)
                 || parse_url($endpoint, PHP_URL_USER) !== null
                 || parse_url($endpoint, PHP_URL_PASS) !== null) {
                 return false;

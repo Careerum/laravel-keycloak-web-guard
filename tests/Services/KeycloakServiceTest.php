@@ -344,6 +344,33 @@ class KeycloakServiceTest extends TestCase
         $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
     }
 
+    public function testCacheBackendFailureIsTypedAndDoesNotTriggerDiscovery(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->andThrow(new \RuntimeException('Database unavailable'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected a typed cache failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertSame('Database unavailable', $e->getPrevious()->getMessage());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testHttpIssuerIsRejectedBeforeDiscoveryRequest(): void
+    {
+        config(['keycloak-web.base_url' => 'http://keycloak.example.com']);
+        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException::class);
+        try {
+            $this->service()->getLoginUrl();
+        } finally {
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
     public function testMissingCacheStoreIsTypedAndDoesNotTriggerDiscovery(): void
     {
         config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_cache_store' => 'not-configured']);
