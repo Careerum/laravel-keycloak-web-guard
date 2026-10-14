@@ -401,6 +401,54 @@ class KeycloakServiceTest extends TestCase
         $this->assertSame($entry['fetched_at'], \Illuminate\Support\Facades\Cache::get($key)['fetched_at']);
     }
 
+    public function testSubclassProvidedDiscoveryIsPreservedWithoutARequest(): void
+    {
+        $configuration = [
+            'issuer' => self::BASE_URL . '/realms/' . self::REALM,
+            'authorization_endpoint' => self::BASE_URL . '/auth',
+            'token_endpoint' => self::BASE_URL . '/token',
+            'userinfo_endpoint' => self::BASE_URL . '/userinfo',
+            'end_session_endpoint' => self::BASE_URL . '/logout',
+            'jwks_uri' => self::BASE_URL . '/certs',
+        ];
+        $client = new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($this->mockHandler)]);
+        $service = new class($client, $configuration) extends KeycloakService {
+            public function __construct(\GuzzleHttp\ClientInterface $client, array $configuration)
+            {
+                $this->openid = $configuration;
+                parent::__construct($client);
+            }
+        };
+
+        $this->assertStringStartsWith(self::BASE_URL . '/auth?', $service->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testUppercaseEndpointSchemeAndHostAreAccepted(): void
+    {
+        $this->queueOpenIdConfiguration(['token_endpoint' => 'HTTPS://KEYCLOAK.EXAMPLE.COM/token']);
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+    }
+
+    public function testStaleDiscoveryIsNotReturnedWhenRetryCrossesHardExpiry(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 1, 'keycloak-web.openid_stale_ttl' => 2]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 2;
+        \Illuminate\Support\Facades\Cache::put($key, $entry, 3);
+        $this->mockHandler->append(function () {
+            sleep(2);
+            return new Response(503);
+        }, new Response(503), new Response(503));
+
+        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class);
+        $this->service()->getLoginUrl();
+    }
+
     public function testMissingCacheStoreIsTypedAndDoesNotTriggerDiscovery(): void
     {
         config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_cache_store' => 'not-configured']);

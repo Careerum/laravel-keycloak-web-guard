@@ -318,7 +318,6 @@ class KeycloakService
     public function getUserProfile($credentials)
     {
         $this->reuseDiscoveryDuringProfile = true;
-        $this->openid = null;
         $this->openidHardExpiresAt = null;
         try {
             return $this->loadUserProfile($credentials);
@@ -521,6 +520,15 @@ class KeycloakService
         // document is reused as-is: one discovery refresh per operation, never
         // a retry cycle per looked-up field. The shared cache entry keeps its
         // original fetched_at, so this does not extend stale lifetime.
+        if ($this->openid !== null && $this->openidFetchedAt === null) {
+            // A subclass may provide metadata before parent::__construct().
+            // Preserve this pre-existing extension point only after validation.
+            if (! $this->validDiscovery($this->openid)) {
+                throw new InvalidOpenIdConfigurationException();
+            }
+            return Arr::get($this->openid, $key);
+        }
+
         if ($this->reuseDiscoveryDuringProfile && $this->openid !== null
             && ($this->openidHardExpiresAt === null || time() < $this->openidHardExpiresAt)) {
             return Arr::get($this->openid, $key);
@@ -541,6 +549,7 @@ class KeycloakService
 
         if ($this->reuseDiscoveryDuringProfile) {
             $this->openid = $configuration;
+            $this->openidFetchedAt = time();
         }
 
         return Arr::get($configuration, $key);
@@ -579,6 +588,7 @@ class KeycloakService
         $staleTtl = max(0, (int) Config::get('keycloak-web.openid_stale_ttl', 3600));
         $entry = $cache->get($key);
         $stale = $this->cachedDiscovery($entry, $freshTtl, $staleTtl);
+        $staleFetchedAt = $stale !== null ? $entry['fetched_at'] : null;
         if ($this->reuseDiscoveryDuringProfile && $stale !== null) {
             $this->openidHardExpiresAt = $entry['fetched_at'] + $freshTtl + $staleTtl;
         }
@@ -609,6 +619,9 @@ class KeycloakService
                 return $current;
             }
             $stale = $current ?? $stale;
+            if ($current !== null) {
+                $staleFetchedAt = $entry['fetched_at'];
+            }
             if ($this->reuseDiscoveryDuringProfile && $current !== null) {
                 $this->openidHardExpiresAt = $entry['fetched_at'] + $freshTtl + $staleTtl;
             }
@@ -616,7 +629,9 @@ class KeycloakService
             try {
                 $configuration = $this->fetchOpenIdConfiguration();
             } catch (OpenIdConfigurationUnavailableException $e) {
-                if ($stale !== null && ($e->retryable() || $e instanceof InvalidOpenIdConfigurationException)) {
+                if ($stale !== null && $staleFetchedAt !== null
+                    && time() < $staleFetchedAt + $freshTtl + $staleTtl
+                    && ($e->retryable() || $e instanceof InvalidOpenIdConfigurationException)) {
                     Log::warning('[Keycloak Service] OpenID discovery refresh failed; using stale configuration', [
                         'upstream_status' => $e->getUpstreamStatus(),
                         'retryable' => $e->retryable(),
@@ -651,7 +666,7 @@ class KeycloakService
     private function fetchOpenIdConfiguration(): array
     {
         $issuer = $this->baseUrl . '/realms/' . rawurlencode($this->realm);
-        if (parse_url($issuer, PHP_URL_SCHEME) !== 'https'
+        if (strcasecmp((string) parse_url($issuer, PHP_URL_SCHEME), 'https') !== 0
             || parse_url($issuer, PHP_URL_HOST) === null
             || parse_url($issuer, PHP_URL_USER) !== null
             || parse_url($issuer, PHP_URL_PASS) !== null) {
@@ -710,7 +725,7 @@ class KeycloakService
             return false;
         }
         $issuer = $this->baseUrl . '/realms/' . rawurlencode($this->realm);
-        if (parse_url($issuer, PHP_URL_SCHEME) !== 'https'
+        if (strcasecmp((string) parse_url($issuer, PHP_URL_SCHEME), 'https') !== 0
             || parse_url($issuer, PHP_URL_HOST) === null
             || ($configuration['issuer'] ?? null) !== $issuer) {
             return false;
@@ -718,8 +733,8 @@ class KeycloakService
         foreach (['authorization_endpoint', 'token_endpoint', 'userinfo_endpoint', 'end_session_endpoint', 'jwks_uri'] as $field) {
             $endpoint = $configuration[$field] ?? null;
             if (! is_string($endpoint) || ! filter_var($endpoint, FILTER_VALIDATE_URL)
-                || parse_url($endpoint, PHP_URL_SCHEME) !== 'https'
-                || parse_url($endpoint, PHP_URL_HOST) !== parse_url($issuer, PHP_URL_HOST)
+                || strcasecmp((string) parse_url($endpoint, PHP_URL_SCHEME), 'https') !== 0
+                || strcasecmp((string) parse_url($endpoint, PHP_URL_HOST), (string) parse_url($issuer, PHP_URL_HOST)) !== 0
                 || (parse_url($endpoint, PHP_URL_PORT) ?? 443) !== (parse_url($issuer, PHP_URL_PORT) ?? 443)
                 || parse_url($endpoint, PHP_URL_USER) !== null
                 || parse_url($endpoint, PHP_URL_PASS) !== null) {
