@@ -7,6 +7,7 @@ use InvalidArgumentException;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException;
 use Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException;
 use Illuminate\Support\Arr;
@@ -626,6 +627,9 @@ class KeycloakService
             $entry = $cache->get($key);
             $current = $this->cachedDiscovery($entry, $freshTtl, $staleTtl);
             if ($current !== null && time() < $entry['fetched_at'] + $freshTtl) {
+                if ($this->reuseDiscoveryDuringProfile) {
+                    $this->openidHardExpiresAt = $entry['fetched_at'] + $freshTtl + $staleTtl;
+                }
                 return $current;
             }
             $stale = $current ?? $stale;
@@ -717,7 +721,11 @@ class KeycloakService
             } catch (GuzzleException $e) {
                 $cause = $e;
                 $this->logException($e);
-                $retryable = $e instanceof ConnectException;
+                $response = $e instanceof RequestException && method_exists($e, 'getResponse') ? $e->getResponse() : null;
+                $status = $response?->getStatusCode();
+                $retryable = $status !== null
+                    ? in_array($status, [502, 503, 504], true)
+                    : $e instanceof ConnectException;
                 if (! $retryable) {
                     break;
                 }

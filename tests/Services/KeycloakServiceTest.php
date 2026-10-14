@@ -313,6 +313,39 @@ class KeycloakServiceTest extends TestCase
         $this->assertSame('POST', $this->mockHandler->getLastRequest()->getMethod());
     }
 
+    public function testThrownTransientHttpResponseIsRetriedAndReportsStatus(): void
+    {
+        $request = new Request('GET', self::BASE_URL . '/realms/' . self::REALM . '/.well-known/openid-configuration');
+        $this->mockHandler->append(
+            RequestException::create($request, new Response(503)),
+            RequestException::create($request, new Response(503)),
+        );
+        $this->queueOpenIdConfiguration();
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testThrownTransientHttpResponseReportsStatusAfterRetries(): void
+    {
+        $request = new Request('GET', self::BASE_URL . '/realms/' . self::REALM . '/.well-known/openid-configuration');
+        $this->mockHandler->append(
+            RequestException::create($request, new Response(503)),
+            RequestException::create($request, new Response(503)),
+            RequestException::create($request, new Response(503)),
+        );
+
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected discovery failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertSame(503, $e->getUpstreamStatus());
+            $this->assertTrue($e->retryable());
+            $this->assertInstanceOf(RequestException::class, $e->getPrevious());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
     public function testNonRetryableDiscoveryStatusIsReported(): void
     {
         $this->mockHandler->append(new Response(401));
