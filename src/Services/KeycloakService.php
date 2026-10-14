@@ -65,6 +65,12 @@ class KeycloakService
     /** @var int|null */
     protected $openidFetchedAt;
 
+    /** @var bool */
+    private $reuseDiscoveryDuringProfile = false;
+
+    /** @var int|null */
+    private $openidHardExpiresAt;
+
     /**
      * Keycloak OpenId Cache Configuration
      *
@@ -311,6 +317,20 @@ class KeycloakService
      */
     public function getUserProfile($credentials)
     {
+        $this->reuseDiscoveryDuringProfile = true;
+        $this->openid = null;
+        $this->openidHardExpiresAt = null;
+        try {
+            return $this->loadUserProfile($credentials);
+        } finally {
+            $this->reuseDiscoveryDuringProfile = false;
+            $this->openid = null;
+            $this->openidHardExpiresAt = null;
+        }
+    }
+
+    private function loadUserProfile($credentials)
+    {
         $credentials = $this->refreshTokenIfNeeded($credentials);
 
         $user = [];
@@ -497,18 +517,33 @@ class KeycloakService
      */
     protected function getOpenIdValue($key)
     {
-        if ($this->cacheOpenid) {
-            // Cache entry keeps the original fetch timestamp: never extend stale.
-            return Arr::get($this->getOpenIdConfiguration(), $key);
-        }
-        $freshTtl = max(1, (int) Config::get('keycloak-web.openid_fresh_ttl', 300));
-        if ($this->openid === null || $this->openidFetchedAt === null
-            || time() >= $this->openidFetchedAt + $freshTtl) {
-            $this->openid = $this->getOpenIdConfiguration();
-            $this->openidFetchedAt = time();
+        // Within one service operation (e.g. getUserProfile) a validated
+        // document is reused as-is: one discovery refresh per operation, never
+        // a retry cycle per looked-up field. The shared cache entry keeps its
+        // original fetched_at, so this does not extend stale lifetime.
+        if ($this->reuseDiscoveryDuringProfile && $this->openid !== null
+            && ($this->openidHardExpiresAt === null || time() < $this->openidHardExpiresAt)) {
+            return Arr::get($this->openid, $key);
         }
 
-        return Arr::get($this->openid, $key);
+        if ($this->cacheOpenid) {
+            $this->openidHardExpiresAt = null;
+            $configuration = $this->getOpenIdConfiguration();
+        } else {
+            $freshTtl = max(1, (int) Config::get('keycloak-web.openid_fresh_ttl', 300));
+            if ($this->openid === null || $this->openidFetchedAt === null
+                || time() >= $this->openidFetchedAt + $freshTtl) {
+                $this->openid = $this->getOpenIdConfiguration();
+                $this->openidFetchedAt = time();
+            }
+            $configuration = $this->openid;
+        }
+
+        if ($this->reuseDiscoveryDuringProfile) {
+            $this->openid = $configuration;
+        }
+
+        return Arr::get($configuration, $key);
     }
 
     /**
@@ -544,6 +579,9 @@ class KeycloakService
         $staleTtl = max(0, (int) Config::get('keycloak-web.openid_stale_ttl', 3600));
         $entry = $cache->get($key);
         $stale = $this->cachedDiscovery($entry, $freshTtl, $staleTtl);
+        if ($this->reuseDiscoveryDuringProfile && $stale !== null) {
+            $this->openidHardExpiresAt = $entry['fetched_at'] + $freshTtl + $staleTtl;
+        }
 
         if ($stale !== null && time() < $entry['fetched_at'] + $freshTtl) {
             return $stale;
@@ -571,6 +609,9 @@ class KeycloakService
                 return $current;
             }
             $stale = $current ?? $stale;
+            if ($this->reuseDiscoveryDuringProfile && $current !== null) {
+                $this->openidHardExpiresAt = $entry['fetched_at'] + $freshTtl + $staleTtl;
+            }
 
             try {
                 $configuration = $this->fetchOpenIdConfiguration();
@@ -586,6 +627,9 @@ class KeycloakService
             }
 
             $cache->put($key, ['configuration' => $configuration, 'fetched_at' => time()], $freshTtl + $staleTtl);
+            if ($this->reuseDiscoveryDuringProfile) {
+                $this->openidHardExpiresAt = time() + $freshTtl + $staleTtl;
+            }
             return $configuration;
         } finally {
             $lock->release();
@@ -637,7 +681,7 @@ class KeycloakService
                         return $configuration;
                     }
                     // Invalid configuration is not a transient transport error.
-                    throw new InvalidOpenIdConfigurationException();
+                    throw new InvalidOpenIdConfigurationException(null, 200);
                 }
                 $status = $response->getStatusCode();
                 if (! in_array($status, [502, 503, 504], true)) {
@@ -676,7 +720,7 @@ class KeycloakService
             if (! is_string($endpoint) || ! filter_var($endpoint, FILTER_VALIDATE_URL)
                 || parse_url($endpoint, PHP_URL_SCHEME) !== 'https'
                 || parse_url($endpoint, PHP_URL_HOST) !== parse_url($issuer, PHP_URL_HOST)
-                || parse_url($endpoint, PHP_URL_PORT) !== parse_url($issuer, PHP_URL_PORT)
+                || (parse_url($endpoint, PHP_URL_PORT) ?? 443) !== (parse_url($issuer, PHP_URL_PORT) ?? 443)
                 || parse_url($endpoint, PHP_URL_USER) !== null
                 || parse_url($endpoint, PHP_URL_PASS) !== null) {
                 return false;

@@ -363,12 +363,42 @@ class KeycloakServiceTest extends TestCase
     public function testHttpIssuerIsRejectedBeforeDiscoveryRequest(): void
     {
         config(['keycloak-web.base_url' => 'http://keycloak.example.com']);
-        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException::class);
         try {
             $this->service()->getLoginUrl();
-        } finally {
+            $this->fail('An HTTP issuer must be rejected.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException $e) {
+            $this->assertNull($e->getUpstreamStatus());
             $this->assertSame(0, $this->mockHandler->count());
         }
+    }
+
+    public function testExplicitDefaultHttpsPortIsAllowedForEndpoints(): void
+    {
+        $this->queueOpenIdConfiguration([
+            'token_endpoint' => 'https://keycloak.example.com:443/realms/test-realm/protocol/openid-connect/token',
+        ]);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+    }
+
+    public function testProfileReusesStaleDiscoveryAfterOneFailedRefresh(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        \Illuminate\Support\Facades\Cache::put($key, $entry, 10);
+
+        $this->mockHandler->append(new Response(503), new Response(503), new Response(503));
+        $this->queueUserInfo('user-uuid');
+        $user = $this->service()->getUserProfile($this->validCredentials());
+
+        $this->assertSame('user-uuid', $user['sub']);
+        $this->assertSame(0, $this->mockHandler->count());
+        $this->assertSame($entry['fetched_at'], \Illuminate\Support\Facades\Cache::get($key)['fetched_at']);
     }
 
     public function testMissingCacheStoreIsTypedAndDoesNotTriggerDiscovery(): void
