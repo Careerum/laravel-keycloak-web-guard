@@ -422,6 +422,9 @@ class KeycloakServiceTest extends TestCase
         };
 
         $this->assertStringStartsWith(self::BASE_URL . '/auth?', $service->getLoginUrl());
+        $this->queueUserInfo('user-uuid');
+        $this->assertSame('user-uuid', $service->getUserProfile($this->validCredentials())['sub']);
+        $this->assertStringStartsWith(self::BASE_URL . '/logout?', $service->getLogoutUrl());
         $this->assertSame(0, $this->mockHandler->count());
     }
 
@@ -484,10 +487,12 @@ class KeycloakServiceTest extends TestCase
     public function testMissingCacheStoreIsTypedAndDoesNotTriggerDiscovery(): void
     {
         config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_cache_store' => 'not-configured']);
-        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class);
         try {
             $this->service()->getLoginUrl();
-        } finally {
+            $this->fail('Expected a typed configuration failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertFalse($e->retryable());
+            $this->assertNull($e->getUpstreamStatus());
             $this->assertSame(0, $this->mockHandler->count());
         }
     }

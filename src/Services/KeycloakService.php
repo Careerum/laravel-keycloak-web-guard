@@ -3,6 +3,7 @@
 namespace Careerum\KeycloakWebGuard\Services;
 
 use Exception;
+use InvalidArgumentException;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\ConnectException;
@@ -317,13 +318,16 @@ class KeycloakService
      */
     public function getUserProfile($credentials)
     {
+        $subclassProvided = $this->openid !== null && $this->openidFetchedAt === null;
         $this->reuseDiscoveryDuringProfile = true;
         $this->openidHardExpiresAt = null;
         try {
             return $this->loadUserProfile($credentials);
         } finally {
             $this->reuseDiscoveryDuringProfile = false;
-            $this->openid = null;
+            if (! $subclassProvided) {
+                $this->openid = null;
+            }
             $this->openidHardExpiresAt = null;
         }
     }
@@ -572,6 +576,8 @@ class KeycloakService
 
         try {
             $cache = Cache::store(Config::get('keycloak-web.openid_cache_store'));
+        } catch (InvalidArgumentException $e) {
+            throw new OpenIdConfigurationUnavailableException($e, null, false);
         } catch (\Throwable $e) {
             throw new OpenIdConfigurationUnavailableException($e);
         }
