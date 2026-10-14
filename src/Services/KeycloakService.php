@@ -530,7 +530,10 @@ class KeycloakService
         }
 
         if ($this->reuseDiscoveryDuringProfile && $this->openid !== null
-            && ($this->openidHardExpiresAt === null || time() < $this->openidHardExpiresAt)) {
+            && ($this->cacheOpenid
+                ? ($this->openidHardExpiresAt !== null && time() < $this->openidHardExpiresAt)
+                : ($this->openidFetchedAt !== null
+                    && time() < $this->openidFetchedAt + max(1, (int) Config::get('keycloak-web.openid_fresh_ttl', 300))))) {
             return Arr::get($this->openid, $key);
         }
 
@@ -601,7 +604,8 @@ class KeycloakService
         // can use verified stale data without blocking its authentication flow.
         $lock = $cache->lock($key . '_lock', 10);
         if (! $lock->get()) {
-            if ($stale !== null) {
+            if ($stale !== null && $staleFetchedAt !== null
+                && time() < $staleFetchedAt + $freshTtl + $staleTtl) {
                 return $stale;
             }
             try {
@@ -676,6 +680,7 @@ class KeycloakService
         $budget = max(1, min(8, (float) Config::get('keycloak-web.openid_retry_budget', 6)));
         $deadline = microtime(true) + $budget;
         $cause = null;
+        $retryable = true;
 
         $status = null;
         for ($attempt = 0; $attempt < 3; $attempt++) {
@@ -699,13 +704,15 @@ class KeycloakService
                     throw new InvalidOpenIdConfigurationException(null, 200);
                 }
                 $status = $response->getStatusCode();
-                if (! in_array($status, [502, 503, 504], true)) {
+                $retryable = in_array($status, [502, 503, 504], true);
+                if (! $retryable) {
                     break;
                 }
             } catch (GuzzleException $e) {
                 $cause = $e;
                 $this->logException($e);
-                if (! ($e instanceof ConnectException)) {
+                $retryable = $e instanceof ConnectException;
+                if (! $retryable) {
                     break;
                 }
             }
@@ -716,7 +723,7 @@ class KeycloakService
         }
 
         Log::warning('[Keycloak Service] OpenID discovery unavailable', ['upstream_status' => $status]);
-        throw new OpenIdConfigurationUnavailableException($cause, $status, $status === null || in_array($status, [502, 503, 504], true));
+        throw new OpenIdConfigurationUnavailableException($cause, $status, $retryable);
     }
 
     private function validDiscovery($configuration): bool

@@ -8,6 +8,7 @@ use Careerum\KeycloakWebGuard\Services\KeycloakService;
 use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 use Careerum\KeycloakWebGuard\Tests\TestCase;
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Support\Facades\Log;
@@ -447,6 +448,37 @@ class KeycloakServiceTest extends TestCase
 
         $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class);
         $this->service()->getLoginUrl();
+    }
+
+    public function testNonConnectionGuzzleFailureWithoutResponseIsNotRetryable(): void
+    {
+        $this->mockHandler->append(new RequestException('Invalid handler request', new Request('GET', self::BASE_URL)));
+
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected discovery failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertNull($e->getUpstreamStatus());
+            $this->assertFalse($e->retryable());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testUncachedDiscoveryRefreshesAtProfileStartAfterFreshTtl(): void
+    {
+        config(['keycloak-web.openid_fresh_ttl' => 1]);
+        $this->queueOpenIdConfiguration();
+        $service = $this->service();
+        $service->getLoginUrl();
+        $fetchedAt = new \ReflectionProperty(KeycloakService::class, 'openidFetchedAt');
+        $fetchedAt->setValue($service, time() - 2);
+
+        $this->queueOpenIdConfiguration();
+        $this->queueUserInfo('user-uuid');
+        $user = $service->getUserProfile($this->validCredentials());
+
+        $this->assertSame('user-uuid', $user['sub']);
+        $this->assertSame(0, $this->mockHandler->count());
     }
 
     public function testMissingCacheStoreIsTypedAndDoesNotTriggerDiscovery(): void
