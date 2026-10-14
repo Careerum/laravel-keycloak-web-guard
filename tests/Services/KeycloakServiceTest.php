@@ -414,6 +414,49 @@ class KeycloakServiceTest extends TestCase
         $this->assertSame(0, $this->mockHandler->count());
     }
 
+    public function testStaleDiscoverySurvivesCacheRereadFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andReturn(true);
+        $lock->shouldReceive('release')->once()->andReturn(true);
+        $store = \Mockery::mock();
+        $reads = 0;
+        $store->shouldReceive('get')->twice()->with($key)->andReturnUsing(function () use ($entry, &$reads) {
+            if ($reads++ === 0) {
+                return $entry;
+            }
+            throw new \RuntimeException('Cache re-read failed');
+        });
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testLockReleaseFailureDoesNotDiscardFreshDiscovery(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andReturn(true);
+        $lock->shouldReceive('release')->once()->andThrow(new \RuntimeException('Lock release failed'));
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->twice()->andReturn(null);
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        $store->shouldReceive('put')->once()->andReturn(true);
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+        $this->queueOpenIdConfiguration();
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
     public function testColdDiscoveryDoesNotFetchAfterLockAcquisitionFailure(): void
     {
         config(['keycloak-web.cache_openid' => true]);

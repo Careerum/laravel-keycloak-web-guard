@@ -629,7 +629,16 @@ class KeycloakService
 
         try {
             // Another worker may have populated the cache while we waited.
-            $entry = $cache->get($key);
+            try {
+                $entry = $cache->get($key);
+            } catch (\Throwable $e) {
+                if ($stale !== null && $staleFetchedAt !== null
+                    && time() < $staleFetchedAt + $freshTtl + $staleTtl) {
+                    Log::warning('[Keycloak Service] OpenID discovery cache re-read unavailable; using stale configuration');
+                    return $stale;
+                }
+                throw $e;
+            }
             $current = $this->cachedDiscovery($entry, $freshTtl, $staleTtl);
             if ($current !== null && time() < $entry['fetched_at'] + $freshTtl) {
                 if ($this->reuseDiscoveryDuringProfile) {
@@ -667,7 +676,11 @@ class KeycloakService
             }
             return $configuration;
         } finally {
-            $lock->release();
+            try {
+                $lock->release();
+            } catch (\Throwable $e) {
+                Log::warning('[Keycloak Service] OpenID discovery lock release failed');
+            }
         }
     }
 
