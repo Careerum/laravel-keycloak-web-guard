@@ -457,6 +457,23 @@ class KeycloakServiceTest extends TestCase
         $this->assertSame(0, $this->mockHandler->count());
     }
 
+    public function testCacheWriteFailureDoesNotDiscardFreshDiscovery(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andReturn(true);
+        $lock->shouldReceive('release')->once()->andReturn(true);
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->twice()->andReturn(null);
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        $store->shouldReceive('put')->once()->andThrow(new \RuntimeException('Cache write failed'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+        $this->queueOpenIdConfiguration();
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
     public function testColdDiscoveryDoesNotFetchAfterLockAcquisitionFailure(): void
     {
         config(['keycloak-web.cache_openid' => true]);

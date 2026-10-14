@@ -670,7 +670,11 @@ class KeycloakService
             }
 
             $fetchedAt = time();
-            $cache->put($key, ['configuration' => $configuration, 'fetched_at' => $fetchedAt], $freshTtl + $staleTtl);
+            try {
+                $cache->put($key, ['configuration' => $configuration, 'fetched_at' => $fetchedAt], $freshTtl + $staleTtl);
+            } catch (\Throwable $e) {
+                Log::warning('[Keycloak Service] OpenID discovery cache write failed');
+            }
             if ($this->reuseDiscoveryDuringProfile) {
                 $this->openidHardExpiresAt = $fetchedAt + $freshTtl + $staleTtl;
             }
