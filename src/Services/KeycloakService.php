@@ -609,17 +609,22 @@ class KeycloakService
 
         // A shared lock prevents every replica from refreshing at once. A waiter
         // can use verified stale data without blocking its authentication flow.
-        $lock = $cache->lock($key . '_lock', 10);
-        if (! $lock->get()) {
+        try {
+            $lock = $cache->lock($key . '_lock', 10);
+            if (! $lock->get()) {
+                if ($stale !== null && $staleFetchedAt !== null
+                    && time() < $staleFetchedAt + $freshTtl + $staleTtl) {
+                    return $stale;
+                }
+                $lock->block(1);
+            }
+        } catch (\Throwable $e) {
             if ($stale !== null && $staleFetchedAt !== null
                 && time() < $staleFetchedAt + $freshTtl + $staleTtl) {
+                Log::warning('[Keycloak Service] OpenID discovery lock unavailable; using stale configuration');
                 return $stale;
             }
-            try {
-                $lock->block(1);
-            } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
-                throw new OpenIdConfigurationUnavailableException($e);
-            }
+            throw $e;
         }
 
         try {
@@ -655,9 +660,10 @@ class KeycloakService
                 throw $e;
             }
 
-            $cache->put($key, ['configuration' => $configuration, 'fetched_at' => time()], $freshTtl + $staleTtl);
+            $fetchedAt = time();
+            $cache->put($key, ['configuration' => $configuration, 'fetched_at' => $fetchedAt], $freshTtl + $staleTtl);
             if ($this->reuseDiscoveryDuringProfile) {
-                $this->openidHardExpiresAt = time() + $freshTtl + $staleTtl;
+                $this->openidHardExpiresAt = $fetchedAt + $freshTtl + $staleTtl;
             }
             return $configuration;
         } finally {
@@ -722,7 +728,7 @@ class KeycloakService
                 $cause = $e;
                 $this->logException($e);
                 $response = $e instanceof RequestException && method_exists($e, 'getResponse') ? $e->getResponse() : null;
-                $status = $response?->getStatusCode();
+                $status = $response !== null ? $response->getStatusCode() : null;
                 $retryable = $status !== null
                     ? in_array($status, [502, 503, 504], true)
                     : $e instanceof ConnectException;

@@ -378,6 +378,58 @@ class KeycloakServiceTest extends TestCase
         $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
     }
 
+    public function testStaleDiscoverySurvivesLockAcquisitionFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->with($key)->andReturn($entry);
+        $store->shouldReceive('lock')->once()->andThrow(new \RuntimeException('Lock backend unavailable'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testStaleDiscoverySurvivesLockGetFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andThrow(new \RuntimeException('Lock acquisition failed'));
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->with($key)->andReturn($entry);
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testColdDiscoveryDoesNotFetchAfterLockAcquisitionFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->andReturn(null);
+        $store->shouldReceive('lock')->once()->andThrow(new \RuntimeException('Lock backend unavailable'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class);
+        try {
+            $this->service()->getLoginUrl();
+        } finally {
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
     public function testCacheBackendFailureIsTypedAndDoesNotTriggerDiscovery(): void
     {
         config(['keycloak-web.cache_openid' => true]);

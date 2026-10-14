@@ -7,11 +7,13 @@ use RuntimeException;
 /** The OpenID discovery document could not be safely obtained. */
 class OpenIdConfigurationUnavailableException extends RuntimeException
 {
-    public function __construct(
-        ?\Throwable $previous = null,
-        private readonly ?int $upstreamStatus = null,
-        private readonly bool $retryable = true,
-    ) {
+    private ?int $upstreamStatus;
+    private bool $retryable;
+
+    public function __construct(?\Throwable $previous = null, ?int $upstreamStatus = null, bool $retryable = true)
+    {
+        $this->upstreamStatus = $upstreamStatus;
+        $this->retryable = $retryable;
         // Keep the transport cause for callers; sanitize it at telemetry boundaries.
         parent::__construct('OpenID configuration is unavailable.', 0, $previous);
     }
