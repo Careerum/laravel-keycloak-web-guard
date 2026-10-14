@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Careerum\KeycloakWebGuard\Auth\KeycloakAccessToken;
 use Careerum\KeycloakWebGuard\Exceptions\KeycloakCallbackException;
+use Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException;
 use Careerum\KeycloakWebGuard\Models\KeycloakUser;
 use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 use Illuminate\Contracts\Auth\UserProvider;
@@ -232,6 +233,9 @@ class KeycloakWebGuard implements StatefulGuard
 
         try {
             return !empty(KeycloakWeb::refreshTokenIfNeeded($credentials));
+        } catch (OpenIdConfigurationUnavailableException $e) {
+            $this->user = null;
+            throw $e;
         } catch (\Exception $e) {
             // Discovery failures can occur before the token request's HTTP error handler.
             return false;
