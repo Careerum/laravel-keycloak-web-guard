@@ -101,11 +101,16 @@ In dashboard go to: Keycloak >> Clients >> Installation.
 
 *  `KEYCLOAK_CACHE_OPENID`
 
-We can cache the OpenId Configuration: it's a list of endpoints we require to Keycloak.
+Enable shared caching for the validated OpenID discovery document (disabled by default). Discovery requires an exact issuer match and HTTPS endpoints on the issuer host; invalid responses never replace a previously valid entry. Old unbounded cache keys are not reused. HTTPS is required even when caching is disabled.
 
-If you activate it, *remember to flush the cache* when change the realm or url.
+*  `KEYCLOAK_OPENID_CACHE_STORE` (default: Laravel's default cache store)
+*  `KEYCLOAK_OPENID_FRESH_TTL` (default: 300 seconds)
+*  `KEYCLOAK_OPENID_STALE_TTL` (default: 3600 additional seconds after freshness)
+*  `KEYCLOAK_OPENID_RETRY_BUDGET` (default: 6 seconds, capped at 8 seconds)
 
-Just add the options you would like as an array to the" to "Just add the options you would like to guzzle_options array on keycloak-web.php config file. For example:
+When caching is enabled, use a **shared cache store with atomic locks** across all replicas (Redis or a configured database lock store). Do not use array/file/local stores in a multi-replica deployment. A fresh document is returned immediately; one lock owner refreshes stale data while other requests can use the last validated document until the hard expiry. A failed refresh may use existing stale data, but never extends its age. On a cold cache, callers wait for the lock for up to one second and recheck the entry. Cache outages and lock backend timeouts must be bounded by the host's backend configuration; Guzzle timeouts alone cannot guarantee an end-to-end deadline. The lock lease is ten seconds. This discovery lock does **not** replace the host's session-blocking requirement described above.
+
+Only discovery GET is retried (up to three attempts for connection failures and HTTP 502/503/504); code exchange, token refresh and other requests are never retried. Discovery failures throw `Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException`, whose `getUpstreamStatus(): ?int`, `operation(): string` (`openid_discovery`) and `retryable(): bool` expose safe classification. Its message is fixed; `getPrevious()` retains the transport exception for compatibility, so error reporting systems must sanitize the chained exception and its request URL/response body before export. Applications should return a temporary error without logging out the user when discovery is unavailable. The HTTP request timeouts are bounded independently of `guzzle_options`; custom handlers must honor them.
 
 ## Laravel Auth
 

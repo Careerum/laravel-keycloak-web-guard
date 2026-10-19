@@ -8,6 +8,7 @@ use Careerum\KeycloakWebGuard\Services\KeycloakService;
 use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 use Careerum\KeycloakWebGuard\Tests\TestCase;
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Support\Facades\Log;
@@ -257,19 +258,446 @@ class KeycloakServiceTest extends TestCase
     public function testDiscoveryFailureThrowsWithoutLeakingTheTransportError(): void
     {
         $transportError = new ConnectException('cURL error 6: Could not resolve host', new Request('GET', 'https://keycloak.example.com/realms/test-realm/.well-known/openid-configuration'));
-        $this->mockHandler->append($transportError);
+        $this->mockHandler->append($transportError, $transportError, $transportError);
 
-        Log::shouldReceive('error')->once();
+        Log::shouldReceive('error')->times(3);
+        Log::shouldReceive('warning')->once();
 
         try {
             $this->service()->getLoginUrl();
             $this->fail('Expected the discovery failure to throw.');
         } catch (\Exception $e) {
-            $this->assertStringContainsString('It was not possible to load OpenId configuration', $e->getMessage());
+            $this->assertInstanceOf(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class, $e);
+            $this->assertSame('OpenID configuration is unavailable.', $e->getMessage());
             $this->assertStringNotContainsString('cURL error', $e->getMessage());
             // The cause stays reachable through the exception chain.
             $this->assertSame($transportError, $e->getPrevious());
         }
+    }
+
+    #[DataProvider('invalidDiscoveryProvider')]
+    public function testInvalidDiscoveryIsTypedAndNeverCached(string $body): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $this->mockHandler->append(new Response(200, [], $body));
+
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Invalid discovery must fail.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException $e) {
+            $this->assertNull($e->getPrevious());
+            $this->assertSame(200, $e->getUpstreamStatus());
+            $this->assertFalse($e->retryable());
+        }
+        $this->queueOpenIdConfiguration();
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+    }
+
+    public static function invalidDiscoveryProvider(): array
+    {
+        return [
+            'malformed JSON' => ['{invalid'],
+            'null' => ['null'],
+            'array' => ['[]'],
+            'missing endpoints' => ['{"issuer":"https://keycloak.example.com/realms/test-realm"}'],
+            'wrong issuer' => ['{"issuer":"https://evil.example.com/realms/test-realm"}'],
+        ];
+    }
+
+    public function testTransientDiscoveryRetriesOnlyTheGetAndReportsStatus(): void
+    {
+        $this->mockHandler->append(new Response(503), new Response(503));
+        $this->queueOpenIdConfiguration();
+        $this->mockHandler->append(new Response(200, [], '{"access_token":"issued"}'));
+        $this->assertSame('issued', $this->service()->getAccessToken('code')['access_token']);
+        $this->assertSame('POST', $this->mockHandler->getLastRequest()->getMethod());
+    }
+
+    public function testThrownTransientHttpResponseIsRetriedAndReportsStatus(): void
+    {
+        $request = new Request('GET', self::BASE_URL . '/realms/' . self::REALM . '/.well-known/openid-configuration');
+        $this->mockHandler->append(
+            RequestException::create($request, new Response(503)),
+            RequestException::create($request, new Response(503)),
+        );
+        $this->queueOpenIdConfiguration();
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testThrownTransientHttpResponseReportsStatusAfterRetries(): void
+    {
+        $request = new Request('GET', self::BASE_URL . '/realms/' . self::REALM . '/.well-known/openid-configuration');
+        $this->mockHandler->append(
+            RequestException::create($request, new Response(503)),
+            RequestException::create($request, new Response(503)),
+            RequestException::create($request, new Response(503)),
+        );
+
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected discovery failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertSame(503, $e->getUpstreamStatus());
+            $this->assertTrue($e->retryable());
+            $this->assertInstanceOf(RequestException::class, $e->getPrevious());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testNonRetryableDiscoveryStatusIsReported(): void
+    {
+        $this->mockHandler->append(new Response(401));
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertSame(401, $e->getUpstreamStatus());
+            $this->assertSame('openid_discovery', $e->operation());
+            $this->assertFalse($e->retryable());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testFreshCacheAndStaleFallback(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+
+        \Carbon\Carbon::setTestNow(\Carbon\Carbon::now()->addSeconds(3));
+        // Cache uses real clock; override the stored fetched_at for deterministic aging.
+        $key = 'keycloak_web_guard_openid_v2_' . hash('sha256', self::BASE_URL . "\0" . self::REALM);
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        \Illuminate\Support\Facades\Cache::put($key, $entry, 10);
+        $this->mockHandler->append(new Response(503), new Response(503), new Response(503));
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+    }
+
+    public function testStaleDiscoverySurvivesLockAcquisitionFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->with($key)->andReturn($entry);
+        $store->shouldReceive('lock')->once()->andThrow(new \RuntimeException('Lock backend unavailable'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testStaleDiscoverySurvivesLockGetFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andThrow(new \RuntimeException('Lock acquisition failed'));
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->with($key)->andReturn($entry);
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testStaleDiscoverySurvivesCacheRereadFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andReturn(true);
+        $lock->shouldReceive('release')->once()->andReturn(true);
+        $store = \Mockery::mock();
+        $reads = 0;
+        $store->shouldReceive('get')->twice()->with($key)->andReturnUsing(function () use ($entry, &$reads) {
+            if ($reads++ === 0) {
+                return $entry;
+            }
+            throw new \RuntimeException('Cache re-read failed');
+        });
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testLockReleaseFailureDoesNotDiscardFreshDiscovery(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andReturn(true);
+        $lock->shouldReceive('release')->once()->andThrow(new \RuntimeException('Lock release failed'));
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->twice()->andReturn(null);
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        $store->shouldReceive('put')->once()->andReturn(true);
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+        $this->queueOpenIdConfiguration();
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testCacheWriteFailureDoesNotDiscardFreshDiscovery(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $lock = \Mockery::mock();
+        $lock->shouldReceive('get')->once()->andReturn(true);
+        $lock->shouldReceive('release')->once()->andReturn(true);
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->twice()->andReturn(null);
+        $store->shouldReceive('lock')->once()->andReturn($lock);
+        $store->shouldReceive('put')->once()->andThrow(new \RuntimeException('Cache write failed'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+        $this->queueOpenIdConfiguration();
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testColdDiscoveryDoesNotFetchAfterLockAcquisitionFailure(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->andReturn(null);
+        $store->shouldReceive('lock')->once()->andThrow(new \RuntimeException('Lock backend unavailable'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class);
+        try {
+            $this->service()->getLoginUrl();
+        } finally {
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testCacheBackendFailureIsTypedAndDoesNotTriggerDiscovery(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        $store = \Mockery::mock();
+        $store->shouldReceive('get')->once()->andThrow(new \RuntimeException('Database unavailable'));
+        \Illuminate\Support\Facades\Cache::shouldReceive('store')->once()->andReturn($store);
+
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected a typed cache failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertSame('Database unavailable', $e->getPrevious()->getMessage());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testHttpIssuerIsRejectedBeforeDiscoveryRequest(): void
+    {
+        config(['keycloak-web.base_url' => 'http://keycloak.example.com']);
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('An HTTP issuer must be rejected.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException $e) {
+            $this->assertNull($e->getUpstreamStatus());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testExplicitDefaultHttpsPortIsAllowedForEndpoints(): void
+    {
+        $this->queueOpenIdConfiguration([
+            'token_endpoint' => 'https://keycloak.example.com:443/realms/test-realm/protocol/openid-connect/token',
+        ]);
+
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+    }
+
+    public function testProfileReusesStaleDiscoveryAfterOneFailedRefresh(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 3;
+        \Illuminate\Support\Facades\Cache::put($key, $entry, 10);
+
+        $this->mockHandler->append(new Response(503), new Response(503), new Response(503));
+        $this->queueUserInfo('user-uuid');
+        $user = $this->service()->getUserProfile($this->validCredentials());
+
+        $this->assertSame('user-uuid', $user['sub']);
+        $this->assertSame(0, $this->mockHandler->count());
+        $this->assertSame($entry['fetched_at'], \Illuminate\Support\Facades\Cache::get($key)['fetched_at']);
+    }
+
+    public function testSubclassProvidedDiscoveryIsPreservedWithoutARequest(): void
+    {
+        $configuration = [
+            'issuer' => self::BASE_URL . '/realms/' . self::REALM,
+            'authorization_endpoint' => self::BASE_URL . '/auth',
+            'token_endpoint' => self::BASE_URL . '/token',
+            'userinfo_endpoint' => self::BASE_URL . '/userinfo',
+            'end_session_endpoint' => self::BASE_URL . '/logout',
+            'jwks_uri' => self::BASE_URL . '/certs',
+        ];
+        $client = new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($this->mockHandler)]);
+        $service = new class($client, $configuration) extends KeycloakService {
+            public function __construct(\GuzzleHttp\ClientInterface $client, array $configuration)
+            {
+                $this->openid = $configuration;
+                parent::__construct($client);
+            }
+        };
+
+        $this->assertStringStartsWith(self::BASE_URL . '/auth?', $service->getLoginUrl());
+        $this->queueUserInfo('user-uuid');
+        $this->assertSame('user-uuid', $service->getUserProfile($this->validCredentials())['sub']);
+        $this->assertStringStartsWith(self::BASE_URL . '/logout?', $service->getLogoutUrl());
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testUppercaseEndpointSchemeAndHostAreAccepted(): void
+    {
+        $this->queueOpenIdConfiguration(['token_endpoint' => 'HTTPS://KEYCLOAK.EXAMPLE.COM/token']);
+        $this->assertStringContainsString('/auth?', $this->service()->getLoginUrl());
+    }
+
+    public function testStaleDiscoveryIsNotReturnedWhenRetryCrossesHardExpiry(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 1, 'keycloak-web.openid_stale_ttl' => 2]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 2;
+        \Illuminate\Support\Facades\Cache::put($key, $entry, 3);
+        $this->mockHandler->append(function () {
+            sleep(2);
+            return new Response(503);
+        }, new Response(503), new Response(503));
+
+        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class);
+        $this->service()->getLoginUrl();
+    }
+
+    public function testNonConnectionGuzzleFailureWithoutResponseIsNotRetryable(): void
+    {
+        $this->mockHandler->append(new RequestException('Invalid handler request', new Request('GET', self::BASE_URL)));
+
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected discovery failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertNull($e->getUpstreamStatus());
+            $this->assertFalse($e->retryable());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testUncachedDiscoveryRefreshesAtProfileStartAfterFreshTtl(): void
+    {
+        config(['keycloak-web.openid_fresh_ttl' => 1]);
+        $this->queueOpenIdConfiguration();
+        $service = $this->service();
+        $service->getLoginUrl();
+        $fetchedAt = new \ReflectionProperty(KeycloakService::class, 'openidFetchedAt');
+        $fetchedAt->setValue($service, time() - 2);
+
+        $this->queueOpenIdConfiguration();
+        $this->queueUserInfo('user-uuid');
+        $user = $service->getUserProfile($this->validCredentials());
+
+        $this->assertSame('user-uuid', $user['sub']);
+        $this->assertSame(0, $this->mockHandler->count());
+    }
+
+    public function testMissingCacheStoreIsTypedAndDoesNotTriggerDiscovery(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_cache_store' => 'not-configured']);
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Expected a typed configuration failure.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertFalse($e->retryable());
+            $this->assertNull($e->getUpstreamStatus());
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    public function testHardExpiredCacheDoesNotServeStale(): void
+    {
+        config(['keycloak-web.cache_openid' => true, 'keycloak-web.openid_fresh_ttl' => 2, 'keycloak-web.openid_stale_ttl' => 10]);
+        $this->queueOpenIdConfiguration();
+        $this->service()->getLoginUrl();
+        $key = $this->discoveryCacheKey();
+        $entry = \Illuminate\Support\Facades\Cache::get($key);
+        $entry['fetched_at'] = time() - 13;
+        \Illuminate\Support\Facades\Cache::put($key, $entry, 30);
+        $this->mockHandler->append(new Response(503), new Response(503), new Response(503));
+        try {
+            $this->service()->getLoginUrl();
+            $this->fail('Hard-expired cache must not be served.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertSame(503, $e->getUpstreamStatus());
+            $this->assertSame($entry['fetched_at'], \Illuminate\Support\Facades\Cache::get($key)['fetched_at']);
+        }
+    }
+
+    #[DataProvider('invalidEndpointProvider')]
+    public function testRejectsUntrustedEndpoints(string $field, string $value): void
+    {
+        $this->queueOpenIdConfiguration([$field => $value]);
+        $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\InvalidOpenIdConfigurationException::class);
+        $this->service()->getLoginUrl();
+    }
+
+    public static function invalidEndpointProvider(): array
+    {
+        return [
+            'http endpoint' => ['token_endpoint', 'http://keycloak.example.com/token'],
+            'other host' => ['userinfo_endpoint', 'https://other.example.com/userinfo'],
+            'userinfo' => ['jwks_uri', 'https://user:pass@keycloak.example.com/certs'],
+            'missing JWKS' => ['jwks_uri', ''],
+        ];
+    }
+
+    public function testLockContentionOnColdStartNeverFetchesOutsideTheLock(): void
+    {
+        config(['keycloak-web.cache_openid' => true]);
+        \Carbon\Carbon::setTestNow(); // Laravel's lock polling uses Carbon's clock.
+        $cache = \Illuminate\Support\Facades\Cache::store();
+        $lock = $cache->lock($this->discoveryCacheKey() . '_lock', 10);
+        $this->assertTrue($lock->get());
+        try {
+            $this->expectException(\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException::class);
+            $this->service()->getLoginUrl();
+        } finally {
+            $lock->release();
+            $this->assertSame(0, $this->mockHandler->count());
+        }
+    }
+
+    private function discoveryCacheKey(): string
+    {
+        return 'keycloak_web_guard_openid_v2_' . hash('sha256', self::BASE_URL . "\0" . self::REALM);
     }
 
     private function expiredCredentials(): array

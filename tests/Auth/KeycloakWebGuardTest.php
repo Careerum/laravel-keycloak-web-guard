@@ -247,20 +247,28 @@ class KeycloakWebGuardTest extends TestCase
         ];
     }
 
-    public function testItEndsTheSessionWhenDiscoveryFails(): void
+    public function testItKeepsTheSessionWhenDiscoveryFails(): void
     {
-        $user = $this->loggedInUserWithToken([
+        $credentials = [
             'access_token' => $this->jwt(['exp' => time() - 60]),
             'refresh_token' => 'old-refresh-token',
-        ]);
-        $this->mockHandler->append(new \GuzzleHttp\Exception\ConnectException(
-            'cURL error 7: Connection refused',
-            new \GuzzleHttp\Psr7\Request('GET', self::BASE_URL . '/realms/' . self::REALM . '/.well-known/openid-configuration'),
-        ));
+        ];
+        $user = $this->loggedInUserWithToken($credentials);
+        for ($i = 0; $i < 3; $i++) {
+            $this->mockHandler->append(new \GuzzleHttp\Exception\ConnectException(
+                'cURL error 7: Connection refused',
+                new \GuzzleHttp\Psr7\Request('GET', self::BASE_URL . '/realms/' . self::REALM . '/.well-known/openid-configuration'),
+            ));
+        }
 
-        $this->assertNull($this->guard($user)->user());
-        $this->assertNull(session()->get($this->guardSessionKey()));
-        $this->assertNull(KeycloakWeb::retrieveToken());
+        $guard = $this->guard($user);
+        try {
+            $guard->user();
+            $this->fail('Discovery failure should propagate.');
+        } catch (\Careerum\KeycloakWebGuard\Exceptions\OpenIdConfigurationUnavailableException $e) {
+            $this->assertSame('user-uuid', session()->get($this->guardSessionKey()));
+            $this->assertSame($credentials, KeycloakWeb::retrieveToken());
+        }
     }
 
     private function expiredCredentials(): array

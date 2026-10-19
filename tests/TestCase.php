@@ -71,6 +71,7 @@ abstract class TestCase extends TestbenchTestCase
             'authorization_endpoint' => self::BASE_URL . '/realms/' . self::REALM . '/protocol/openid-connect/auth',
             'token_endpoint' => self::BASE_URL . '/realms/' . self::REALM . '/protocol/openid-connect/token',
             'userinfo_endpoint' => self::BASE_URL . '/realms/' . self::REALM . '/protocol/openid-connect/userinfo',
+            'jwks_uri' => self::BASE_URL . '/realms/' . self::REALM . '/protocol/openid-connect/certs',
             'end_session_endpoint' => self::BASE_URL . '/realms/' . self::REALM . '/protocol/openid-connect/logout',
         ], $overrides))));
     }

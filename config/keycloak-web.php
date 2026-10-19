@@ -44,6 +44,14 @@ return [
      */
     'cache_openid' => env('KEYCLOAK_CACHE_OPENID', false),
 
+    // Use a shared atomic-lock-capable cache store in multi-replica deployments.
+    'openid_cache_store' => env('KEYCLOAK_OPENID_CACHE_STORE', null),
+    // Seconds: stale_ttl is the additional lifetime after fresh_ttl.
+    'openid_fresh_ttl' => env('KEYCLOAK_OPENID_FRESH_TTL', 300),
+    'openid_stale_ttl' => env('KEYCLOAK_OPENID_STALE_TTL', 3600),
+    // Maximum discovery GET retry budget in seconds (capped at eight).
+    'openid_retry_budget' => env('KEYCLOAK_OPENID_RETRY_BUDGET', 6),
+
     /**
      * Page to redirect after callback if there's no "intent"
      *
