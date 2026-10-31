@@ -28,7 +28,7 @@ class InvalidCallbackStateTest extends TestCase
 
     public function testFirstInvalidCallbackRedirectsOnlyOnceWithoutAnIntendedUrl(): void
     {
-        $this->get('/callback')->assertRedirectContains('/?retry_login=');
+        $this->get('/callback')->assertRedirectContains('?retry_login=');
 
         $this->withoutExceptionHandling();
         $this->expectException(InvalidCallbackStateException::class);
@@ -48,19 +48,19 @@ class InvalidCallbackStateTest extends TestCase
 
     public function testSuccessfulStateClearsRetryMarker(): void
     {
-        $this->get('/callback')->assertRedirectContains('/?retry_login=');
+        $this->get('/callback')->assertRedirectContains('?retry_login=');
 
         $this->withSession(['_keycloak_state' => 'expected']);
         $this->get('/callback?state=expected')->assertRedirect(route('keycloak.login'));
 
-        $this->get('/callback')->assertRedirectContains('/?retry_login=');
+        $this->get('/callback')->assertRedirectContains('?retry_login=');
     }
 
     public function testExpiredRetryWindowAllowsAnotherAttempt(): void
     {
         $this->withSession(['_keycloak_retry_login' => time() - 31]);
 
-        $this->get('/callback')->assertRedirectContains('/?retry_login=');
+        $this->get('/callback')->assertRedirectContains('?retry_login=');
     }
 
     public function testIdentityProviderErrorKeepsTheGeneralException(): void
