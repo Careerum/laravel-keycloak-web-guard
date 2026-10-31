@@ -67,6 +67,8 @@ class AuthController extends Controller
             return $this->retryService->retry();
         }
 
+        $this->retryService->clearRetry();
+
         // Change code for token
         $code = $request->input('code');
         if (! empty($code)) {

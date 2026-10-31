@@ -2,7 +2,7 @@
 
 namespace Careerum\KeycloakWebGuard\Services;
 
-use Careerum\KeycloakWebGuard\Exceptions\KeycloakCallbackException;
+use Careerum\KeycloakWebGuard\Exceptions\InvalidCallbackStateException;
 use Careerum\KeycloakWebGuard\Facades\KeycloakWeb;
 use Illuminate\Http\RedirectResponse;
 
@@ -10,11 +10,12 @@ class RetryService
 {
     const RETRY_LOGIN_QUERY_NAME = 'retry_login';
     const RETRY_LOGIN_TIMEOUT = 30;
+    private const RETRY_LOGIN_SESSION_NAME = '_keycloak_retry_login';
 
     /**
      * @return RedirectResponse
      *
-     * @throws KeycloakCallbackException
+     * @throws InvalidCallbackStateException
      */
     public function retry(): RedirectResponse
     {
@@ -22,9 +23,15 @@ class RetryService
         $query = $this->getQuery($currentRedirectUrl);
         $this->canRetry($query);
         $redirectUrl = $this->buildRedirectUrlForRetry($currentRedirectUrl);
+        session()->put(self::RETRY_LOGIN_SESSION_NAME, time());
         KeycloakWeb::forgetState();
 
         return redirect($redirectUrl);
+    }
+
+    public function clearRetry(): void
+    {
+        session()->forget(self::RETRY_LOGIN_SESSION_NAME);
     }
 
     private function getRedirectUrl(): string
@@ -47,10 +54,14 @@ class RetryService
 
     private function canRetry(array $query): void
     {
-        if (isset($query[self::RETRY_LOGIN_QUERY_NAME]) && time() - $query[self::RETRY_LOGIN_QUERY_NAME] < self::RETRY_LOGIN_TIMEOUT) {
+        $lastRetry = session()->get(self::RETRY_LOGIN_SESSION_NAME);
+        $retryInUrl = $query[self::RETRY_LOGIN_QUERY_NAME] ?? null;
+
+        if ((is_numeric($lastRetry) && time() - $lastRetry < self::RETRY_LOGIN_TIMEOUT)
+            || (is_numeric($retryInUrl) && time() - $retryInUrl < self::RETRY_LOGIN_TIMEOUT)) {
             KeycloakWeb::forgetState();
 
-            throw new KeycloakCallbackException('Invalid state');
+            throw new InvalidCallbackStateException();
         }
     }
 
