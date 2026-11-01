@@ -58,7 +58,8 @@ class RetryService
         $retryInUrl = $query[self::RETRY_LOGIN_QUERY_NAME] ?? null;
 
         if ((is_numeric($lastRetry) && time() - $lastRetry < self::RETRY_LOGIN_TIMEOUT)
-            || (is_numeric($retryInUrl) && time() - $retryInUrl < self::RETRY_LOGIN_TIMEOUT)) {
+            || (is_numeric($retryInUrl) && $retryInUrl <= time()
+                && time() - $retryInUrl < self::RETRY_LOGIN_TIMEOUT)) {
             KeycloakWeb::forgetState();
 
             throw new InvalidCallbackStateException();

@@ -46,12 +46,21 @@ class InvalidCallbackStateTest extends TestCase
         $this->get('/callback');
     }
 
-    public function testSuccessfulStateClearsRetryMarker(): void
+    public function testMatchingStateWithoutCodeDoesNotClearRetryMarker(): void
     {
         $this->get('/callback')->assertRedirectContains('?retry_login=');
 
         $this->withSession(['_keycloak_state' => 'expected']);
         $this->get('/callback?state=expected')->assertRedirect(route('keycloak.login'));
+
+        $this->withoutExceptionHandling();
+        $this->expectException(InvalidCallbackStateException::class);
+        $this->get('/callback');
+    }
+
+    public function testFutureRetryTimestampCannotBlockFirstRetry(): void
+    {
+        $this->withSession(['url.intended' => '/?retry_login=9999999999']);
 
         $this->get('/callback')->assertRedirectContains('?retry_login=');
     }

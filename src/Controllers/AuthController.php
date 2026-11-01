@@ -67,7 +67,8 @@ class AuthController extends Controller
             return $this->retryService->retry();
         }
 
-        $this->retryService->clearRetry();
+        // A matching state is single-use, even when the callback has no code.
+        KeycloakWeb::forgetState();
 
         // Change code for token
         $code = $request->input('code');
@@ -75,7 +76,9 @@ class AuthController extends Controller
             $token = KeycloakWeb::getAccessToken($code);
 
             if (Auth::validate($token)) {
+                $this->retryService->clearRetry();
                 $url = config('keycloak-web.redirect_url', '/admin');
+
                 return redirect()->intended($url);
             }
         }
